@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS("14.2")],
     targets: [
         .target(name: "AudioRing", path: "Sources/AudioRing", publicHeadersPath: "include"),
-        .executableTarget(name: "Hush", dependencies: ["AudioRing"], path: "Sources/Hush"),
+        .executableTarget(name: "Hush", dependencies: ["AudioRing"], path: "Sources/Hush",
+                          exclude: ["Resources"]),
         .testTarget(name: "HushTests", dependencies: ["Hush", "AudioRing"], path: "Tests")
     ]
 )

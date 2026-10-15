@@ -31,6 +31,8 @@ struct AudioDiagnostics {
     var routeStarts = 0
     var lastRouteSetupMs = 0.0
     var gainReductionDb = 0.0
+    var peakLevel = 0.0
+    var bandLevels = Array(repeating: 0.0, count: 8)
     var queuedMs: Double { sampleRate > 0 ? Double(queuedFrames) / sampleRate * 1_000 : 0 }
 }
 
@@ -91,12 +93,16 @@ private final class AppRoute {
     let equalizer = AudioRouter.makeEqualizer()
     let compressor = AudioRouter.makeEffect(kAudioUnitSubType_DynamicsProcessor)
     let limiter = AudioRouter.makeEffect(kAudioUnitSubType_PeakLimiter)
+    let outputUID: String
+    let graph: AVAudioEngine
     var tap: AudioObjectID = 0
     var aggregate: AudioObjectID = 0
     var ioProc: AudioDeviceIOProcID?
 
-    init(ids: [AudioObjectID], sampleRate: Double) throws {
+    init(ids: [AudioObjectID], sampleRate: Double, outputUID: String, graph: AVAudioEngine) throws {
         self.ids = ids
+        self.outputUID = outputUID
+        self.graph = graph
         guard let ring = AudioRingCreate(8192) else { throw HushAudioError("Could not allocate audio buffer") }
         self.ring = ring
         equalizer.bypass = true
@@ -125,6 +131,7 @@ struct HushAudioError: LocalizedError {
 
 final class AudioRouter {
     private let engine = AVAudioEngine()
+    private var outputEngines: [String: AVAudioEngine] = [:]
     private var routes: [String: AppRoute] = [:]
     private var lastSeen: [String: TimeInterval] = [:]
     // Keep disconnected app nodes alive until the engine stops: removing a mixer from a
@@ -160,6 +167,23 @@ final class AudioRouter {
             guard AudioObjectAddPropertyListenerBlock(system, &key, queue, block) == noErr else { continue }
             listenerBlocks.append((key, block))
         }
+    }
+
+    func stopMonitoring() {
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        for (var key, block) in listenerBlocks {
+            AudioObjectRemovePropertyListenerBlock(system, &key, listenerQueue, block)
+        }
+        listenerBlocks.removeAll()
+        if let queue = listenerQueue {
+            for (object, block) in processListenerBlocks {
+                var key = address(kAudioProcessPropertyIsRunningOutput)
+                AudioObjectRemovePropertyListenerBlock(object, &key, queue, block)
+            }
+        }
+        processListenerBlocks.removeAll()
+        listenerQueue = nil
+        processOutputChanged = nil
     }
 
     func prepare() throws {
@@ -282,6 +306,12 @@ final class AudioRouter {
             result.queuedFrames = max(result.queuedFrames, Int(stats.queuedFrames))
             result.underrunFrames += stats.underrunFrames
             result.skippedFrames += stats.skippedFrames
+            result.peakLevel = max(result.peakLevel, Double(stats.peakLevel))
+            let bands = [stats.bandLevels.0, stats.bandLevels.1, stats.bandLevels.2, stats.bandLevels.3,
+                         stats.bandLevels.4, stats.bandLevels.5, stats.bandLevels.6, stats.bandLevels.7]
+            for index in bands.indices {
+                result.bandLevels[index] = max(result.bandLevels[index], Double(bands[index]))
+            }
         }
         return result
     }
@@ -366,14 +396,19 @@ final class AudioRouter {
             outputRate = rate
             for app in apps { lastSeen[app.id] = now }
         }
+        let availableOutputs = Dictionary(uniqueKeysWithValues: outputDevices().map { ($0.id, $0) })
         let wanted = Dictionary(uniqueKeysWithValues: apps.map { ($0.id, $0) })
         for (id, route) in routes {
             if let app = wanted[id] {
-                if app.processIDs != route.ids { remove(id) }
+                let assigned = settings.sourceOutputs[id].flatMap { availableOutputs[$0] }?.id ?? uid
+                if app.processIDs != route.ids || assigned != route.outputUID { remove(id) }
             } else if route.ids.allSatisfy({ !liveProcesses.contains($0) }) { remove(id) }
         }
         do {
-            for app in apps where routes[app.id] == nil { try add(app, settings: settings) }
+            for app in apps where routes[app.id] == nil {
+                let assigned = settings.sourceOutputs[app.id].flatMap { availableOutputs[$0] }?.id ?? uid
+                try add(app, outputUID: assigned, settings: settings)
+            }
             apply(settings)
         } catch {
             if routes.isEmpty { stop() }
@@ -383,11 +418,17 @@ final class AudioRouter {
     }
 
     func apply(_ settings: HushSettings) {
+        guard settings.masterEnabled else {
+            stop()
+            return
+        }
         let peakBoost = settings.bands.max() ?? 0
         let preamp = settings.autoPreamp ? min(0, -peakBoost) : settings.preamp
         let dynamics = settings.dynamics
         engine.mainMixerNode.outputVolume = Float(settings.outputTrim)
+        for graph in outputEngines.values { graph.mainMixerNode.outputVolume = Float(settings.outputTrim) }
         for (id, route) in routes {
+            AudioRingSetAnalysisEnabled(route.ring, settings.visualizerEnabled ? 1 : 0)
             route.equalizer.bypass = !settings.equalizerEnabled || !isIncluded(id, scope: settings.equalizerScope,
                                                                                 sources: settings.equalizerSources)
             route.equalizer.globalGain = Float(preamp)
@@ -425,13 +466,15 @@ final class AudioRouter {
         engineReady = false
         for id in Array(routes.keys) { remove(id) }
         for route in retired {
-            engine.detach(route.source)
-            engine.detach(route.mixer)
-            engine.detach(route.equalizer)
-            engine.detach(route.compressor)
-            engine.detach(route.limiter)
+            route.graph.detach(route.source)
+            route.graph.detach(route.mixer)
+            route.graph.detach(route.equalizer)
+            route.graph.detach(route.compressor)
+            route.graph.detach(route.limiter)
         }
         retired.removeAll()
+        for graph in outputEngines.values { graph.stop() }
+        outputEngines.removeAll()
         lastSeen.removeAll()
         outputID = 0
         outputUID = ""
@@ -439,21 +482,37 @@ final class AudioRouter {
     }
 
     deinit {
-        let system = AudioObjectID(kAudioObjectSystemObject)
-        for (var key, block) in listenerBlocks {
-            AudioObjectRemovePropertyListenerBlock(system, &key, listenerQueue, block)
-        }
-        if let queue = listenerQueue {
-            for (object, block) in processListenerBlocks {
-                var key = address(kAudioProcessPropertyIsRunningOutput)
-                AudioObjectRemovePropertyListenerBlock(object, &key, queue, block)
-            }
-        }
+        stopMonitoring()
     }
 
-    private func add(_ app: AudioApp, settings: HushSettings) throws {
+    private func graph(for uid: String, deviceID: AudioObjectID) throws -> AVAudioEngine {
+        if uid == outputUID { return engine }
+        if let graph = outputEngines[uid] { return graph }
+        let graph = AVAudioEngine()
+        guard let audioUnit = graph.outputNode.audioUnit else {
+            throw HushAudioError("Output engine for \(uid) is unavailable")
+        }
+        var deviceID = deviceID
+        let status = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, 0,
+                                          &deviceID, UInt32(MemoryLayout<AudioObjectID>.size))
+        guard status == noErr else {
+            throw HushAudioError("Could not assign output device (\(status))")
+        }
+        outputEngines[uid] = graph
+        return graph
+    }
+
+    private func add(_ app: AudioApp, outputUID targetUID: String, settings: HushSettings) throws {
         let setupStarted = ProcessInfo.processInfo.systemUptime
         let tapUUID = UUID()
+        let targetDevice = objectList(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices)
+            .first { stringProperty($0, kAudioDevicePropertyDeviceUID) == targetUID }
+        guard let targetDevice else { throw HushAudioError("Output device is unavailable") }
+        let graph = try graph(for: targetUID, deviceID: targetDevice)
+        // Capture from the current system output. The destination aggregate is
+        // independent, so assigning a source does not require the source app to
+        // already be routed to that device.
         let description = CATapDescription(processes: app.processIDs, deviceUID: outputUID, stream: 0)
         description.uuid = tapUUID
         description.name = "Hush: \(app.name)"
@@ -476,15 +535,16 @@ final class AudioRouter {
                   format.mSampleRate > 0 else {
                 throw HushAudioError("Unsupported audio format for \(app.name)")
             }
-            let route = try AppRoute(ids: app.processIDs, sampleRate: format.mSampleRate)
+            let route = try AppRoute(ids: app.processIDs, sampleRate: format.mSampleRate,
+                                     outputUID: targetUID, graph: graph)
             route.tap = tap
             do {
                 let details: [String: Any] = [
                     kAudioAggregateDeviceNameKey: "Hush \(app.name)",
                     kAudioAggregateDeviceUIDKey: UUID().uuidString,
                     kAudioAggregateDeviceIsPrivateKey: true,
-                    kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: outputUID]],
-                    kAudioAggregateDeviceMainSubDeviceKey: outputUID
+                    kAudioAggregateDeviceSubDeviceListKey: [[                    kAudioSubDeviceUIDKey: targetUID]],
+                    kAudioAggregateDeviceMainSubDeviceKey: targetUID
                 ]
                 let aggregateStatus = AudioHardwareCreateAggregateDevice(details as CFDictionary, &route.aggregate)
                 guard aggregateStatus == noErr else {
@@ -499,23 +559,23 @@ final class AudioRouter {
                     Thread.sleep(forTimeInterval: 0.01)
                 }
                 guard alive else { throw HushAudioError("Audio device for \(app.name) did not start") }
-                engine.attach(route.source)
-                engine.attach(route.mixer)
-                engine.attach(route.equalizer)
-                engine.attach(route.compressor)
-                engine.attach(route.limiter)
+                graph.attach(route.source)
+                graph.attach(route.mixer)
+                graph.attach(route.equalizer)
+                graph.attach(route.compressor)
+                graph.attach(route.limiter)
                 let format = route.source.outputFormat(forBus: 0)
-                engine.connect(route.source, to: route.mixer, format: format)
-                engine.connect(route.mixer, to: route.equalizer, format: format)
-                engine.connect(route.equalizer, to: route.compressor, format: format)
-                engine.connect(route.compressor, to: route.limiter, format: format)
-                engine.connect(route.limiter, to: engine.mainMixerNode, format: format)
+                graph.connect(route.source, to: route.mixer, format: format)
+                graph.connect(route.mixer, to: route.equalizer, format: format)
+                graph.connect(route.equalizer, to: route.compressor, format: format)
+                graph.connect(route.compressor, to: route.limiter, format: format)
+                graph.connect(route.limiter, to: graph.mainMixerNode, format: format)
                 route.mixer.outputVolume = settings.mutedApps.contains(app.id) ? 0 : Float(settings.volumes[app.id] ?? 1)
                 route.mixer.pan = Float(settings.balance)
                 // Keep the app's native path audible until our output graph can render it.
-                if !engineReady {
-                    try engine.start()
-                    engineReady = true
+                if !graph.isRunning {
+                    try graph.start()
+                    if graph === engine { engineReady = true }
                 }
                 let status = AudioDeviceCreateIOProcIDWithBlock(&route.ioProc, route.aggregate, nil) { _, input, _, output, _ in
                     let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
@@ -551,11 +611,11 @@ final class AudioRouter {
             } catch {
                 if let ioProc = route.ioProc { AudioDeviceDestroyIOProcID(route.aggregate, ioProc) }
                 if route.aggregate != 0 { AudioHardwareDestroyAggregateDevice(route.aggregate) }
-                if route.source.engine != nil { engine.detach(route.source) }
-                if route.mixer.engine != nil { engine.detach(route.mixer) }
-                if route.equalizer.engine != nil { engine.detach(route.equalizer) }
-                if route.compressor.engine != nil { engine.detach(route.compressor) }
-                if route.limiter.engine != nil { engine.detach(route.limiter) }
+                if route.source.engine != nil { graph.detach(route.source) }
+                if route.mixer.engine != nil { graph.detach(route.mixer) }
+                if route.equalizer.engine != nil { graph.detach(route.equalizer) }
+                if route.compressor.engine != nil { graph.detach(route.compressor) }
+                if route.limiter.engine != nil { graph.detach(route.limiter) }
                 throw error
             }
         } catch {
@@ -573,15 +633,15 @@ final class AudioRouter {
         route.mixer.outputVolume = 0
         AudioHardwareDestroyAggregateDevice(route.aggregate)
         AudioHardwareDestroyProcessTap(route.tap)
-        if engine.isRunning {
-            engine.disconnectNodeOutput(route.source)
+        if route.graph.isRunning {
+            route.graph.disconnectNodeOutput(route.source)
             retired.append(route)
         } else {
-            engine.detach(route.source)
-            engine.detach(route.mixer)
-            engine.detach(route.equalizer)
-            engine.detach(route.compressor)
-            engine.detach(route.limiter)
+            route.graph.detach(route.source)
+            route.graph.detach(route.mixer)
+            route.graph.detach(route.equalizer)
+            route.graph.detach(route.compressor)
+            route.graph.detach(route.limiter)
         }
     }
 }

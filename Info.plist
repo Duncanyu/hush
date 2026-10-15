@@ -4,11 +4,12 @@
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleExecutable</key><string>Hush</string>
     <key>CFBundleIdentifier</key><string>com.hushapp.Hush</string>
+    <key>CFBundleIconFile</key><string>HushIcon.icns</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Hush</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.4</string>
-    <key>CFBundleVersion</key><string>4</string>
+    <key>CFBundleShortVersionString</key><string>0.2.0</string>
+    <key>CFBundleVersion</key><string>5</string>
     <key>LSMinimumSystemVersion</key><string>14.2</string>
     <key>LSUIElement</key><true/>
     <key>NSAudioCaptureUsageDescription</key><string>Hush captures app audio to adjust its volume and apply your equalizer.</string>

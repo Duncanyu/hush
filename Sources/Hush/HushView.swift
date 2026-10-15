@@ -310,12 +310,55 @@ private struct OutputPicker: View {
     @ObservedObject var model: HushModel
 
     var body: some View {
-        Picker("Output", selection: Binding(
+        Picker("Default output", selection: Binding(
             get: { model.outputDevices.first(where: \.isDefault)?.id ?? "" },
             set: { model.selectOutput($0) })) {
+                Text("Default output").tag("")
                 if model.outputDevices.isEmpty { Text("No output devices").tag("") }
                 ForEach(model.outputDevices) { device in Text(device.name).tag(device.id) }
             }
+
+    }
+}
+
+private struct SourceOutputPanel: View {
+    @ObservedObject var model: HushModel
+    let compact: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 6 : 10) {
+            HStack {
+                Text("Source routing").font(compact ? .subheadline.weight(.semibold) : .title2.bold())
+                Spacer()
+                if !compact { Text("Choose one output for each source").foregroundStyle(.secondary) }
+            }
+            if model.mixerApps.isEmpty {
+                Text("Add or play an audio source to route it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(model.mixerApps) { app in
+                    HStack(spacing: 8) {
+                        if let icon = app.icon {
+                            Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+                        }
+                        Text(app.name).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Picker("", selection: Binding(
+                            get: { model.settings.sourceOutputs[app.id] ?? "" },
+                            set: { model.setSourceOutput(app.id, $0.isEmpty ? nil : $0) })) {
+                            Text("System default").tag("")
+                            ForEach(model.outputDevices) { device in
+                                Text(device.name).tag(device.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: compact ? 145 : 220)
+                    }
+                }
+            }
+        }
+        .padding(compact ? 10 : 16)
+        .background(panel, in: RoundedRectangle(cornerRadius: compact ? 10 : 14))
     }
 }
 
@@ -326,7 +369,7 @@ private struct SystemVolume: View {
 
     var body: some View {
         HStack {
-            Text("System volume")
+            Text("Volume")
             Slider(value: Binding(get: { selected?.volume ?? 0 },
                                   set: { model.setSystemVolume($0) }), in: 0...1)
                 .disabled(selected?.volume == nil)
@@ -334,7 +377,7 @@ private struct SystemVolume: View {
                 .monospacedDigit().foregroundStyle(.secondary)
                 .frame(width: 82, alignment: .trailing)
         }
-        .help("Controls the selected macOS output device when it supports system volume")
+        .help("Output volume")
     }
 }
 
@@ -478,7 +521,8 @@ struct QuickPanel: View {
                         ForEach(model.mixerApps) { app in AppSlider(model: model, app: app) }
                     }
                 }
-                .padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .padding(12).background(panel, in: RoundedRectangle(cornerRadius: 12))
+                SourceOutputPanel(model: model, compact: true)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Equalizer").font(.headline)
@@ -489,7 +533,7 @@ struct QuickPanel: View {
                     }
                     PresetPicker(model: model)
                 }
-                .padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .padding(12).background(panel, in: RoundedRectangle(cornerRadius: 12))
                 if let error = model.audioError {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange).font(.caption)
@@ -504,6 +548,7 @@ struct QuickPanel: View {
             .padding(18)
         }
         .frame(width: 400, height: 510)
+        .background(Color(nsColor: .windowBackgroundColor))
         .tint(.blue)
     }
 }
@@ -535,19 +580,18 @@ struct SettingsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Hush audio").font(.largeTitle.bold())
-                        Text("Your output, app levels, and sound profile at a glance.")
-                            .foregroundStyle(.secondary)
                     }
                     Spacer()
                     Toggle("Processing", isOn: Binding(get: { model.settings.masterEnabled },
                                                         set: { value in model.change { $0.masterEnabled = value } }))
                 }
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Output", systemImage: "hifispeaker.and.homepod").font(.headline)
+                    Label("Default output", systemImage: "hifispeaker.and.homepod").font(.headline)
                     OutputPicker(model: model)
                     SystemVolume(model: model)
                 }
                 .padding(18).background(panel, in: RoundedRectangle(cornerRadius: 16))
+                SourceOutputPanel(model: model, compact: false)
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Label("Sound profile", systemImage: "waveform.path").font(.headline)
@@ -579,6 +623,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 outputControls
                 mixer
+                SourceOutputPanel(model: model, compact: false)
                 equalizer
                 dynamics
             }
@@ -830,12 +875,10 @@ struct SettingsView: View {
             Text("General").font(.title2.bold())
             Toggle("Show Hush in menu bar", isOn: Binding(get: { model.settings.showMenuBar },
                 set: { value in model.change { $0.showMenuBar = value }; visibilityChanged() }))
-            Text(model.settings.showMenuBar
-                 ? "The quick controls open from the menu bar. Turn this off to use the Dock and full settings window."
-                 : "Hush is in the Dock. Click its Dock icon to open these settings.")
-                .foregroundStyle(.secondary)
-            Text("Hush needs System Audio Recording permission to process other apps' sound. macOS asks the first time an audio tap starts.")
-                .foregroundStyle(.secondary)
+            Toggle("Audio visualizer in menu bar", isOn: Binding(get: { model.settings.visualizerEnabled },
+                set: { value in model.change { $0.visualizerEnabled = value } }))
+            Text("Visualizer off uses the Hush icon.")
+                .font(.caption).foregroundStyle(.secondary)
             Spacer()
         }.frame(maxWidth: .infinity, alignment: .leading)
     }

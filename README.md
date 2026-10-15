@@ -4,7 +4,7 @@
 captures exposed application audio, mixes it back to the selected output, and
 applies optional per-source volume, mute, EQ, compression, and limiting.
 
-**[Download Hush 0.1.4](https://github.com/Duncanyu/hush/releases/tag/v0.1.4)** ·
+**[Download Hush 0.2.0](https://github.com/Duncanyu/hush/releases/tag/v0.2.0)** ·
 [Install](#download-and-install) · [Use](#use) ·
 [Performance and latency](#performance-and-latency)
 
@@ -12,8 +12,8 @@ Hush requires an Apple Silicon Mac running macOS 14.2 or later.
 
 ## Download and install
 
-Download **Hush-v0.1.4-macos-arm64.zip** from the
-[0.1.4 release](https://github.com/Duncanyu/hush/releases/tag/v0.1.4).
+Download **Hush-v0.2.0-macos-arm64.zip** from the
+[0.2.0 release](https://github.com/Duncanyu/hush/releases/tag/v0.2.0).
 
 1. Unzip the download and drag **Hush.app** into **Applications**.
 2. Open Hush. This build is ad hoc signed and is **not notarized**. If macOS
@@ -30,7 +30,7 @@ Download **Hush-v0.1.4-macos-arm64.zip** from the
 The release includes a SHA-256 checksum file. Place it beside the ZIP and run:
 
 ```sh
-shasum -a 256 -c Hush-v0.1.4-macos-arm64.zip.sha256
+shasum -a 256 -c Hush-v0.2.0-macos-arm64.zip.sha256
 ```
 
 ## Use
@@ -38,6 +38,8 @@ shasum -a 256 -c Hush-v0.1.4-macos-arm64.zip.sha256
 - Click the menu-bar waveform for system volume, output selection, app levels,
   mute, EQ presets, and processing status. The popup is keyboard-focused when
   opened.
+- The menu-bar waveform follows the macOS appearance and changes into a
+  low-cost live visualizer when enabled.
 - Choose **Full settings** for the dashboard, advanced mixer, 10-band EQ,
   dynamics, output controls, shortcuts, and general settings.
 - Active applications are discovered automatically. Use **Add audio source**
@@ -59,6 +61,8 @@ shasum -a 256 -c Hush-v0.1.4-macos-arm64.zip.sha256
   UI and reflects the same device volume.
 - Hush supports ⌘W to close the settings window and ⌘A through the standard
   macOS responder chain.
+- Turning Hush off suspends audio processing, listeners, refresh timers, and
+  visualizer diagnostics. Only the shortcut and settings UI remain active.
 
 Hush keeps the low-cost audio render graph warm while processing is enabled,
 including during idle periods, so a newly active app does not wait for the
@@ -102,10 +106,14 @@ safe device recovery over an unverified architectural rewrite.
 
 Automated validation for this release includes:
 
-- `swift test`: 12 tests covering ring-buffer behavior, EQ response, dynamics,
-  settings migration, output profiles, source scopes, and mixer persistence.
+- `swift test`: 14 tests covering ring-buffer behavior, EQ response, dynamics,
+  settings migration, output profiles, source scopes, mixer persistence, and
+  master-switch state restoration.
 - Release build with `./build.sh`.
 - Strict code-signature verification of the packaged application.
+
+The packaged application keeps only the required application icon resource;
+SwiftPM's unused resource bundle is omitted to reduce the distribution size.
 
 Bluetooth end-to-end synchronization and subjective audio quality still depend
 on the output device and require real-world listening; the automated tests do

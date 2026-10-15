@@ -155,6 +155,14 @@ final class HushTests: XCTestCase {
         XCTAssertFalse(try JSONDecoder().decode(DeviceProfile.self, from: legacy).autoPreamp)
     }
 
+    func testMasterRestoreStateRoundTrip() throws {
+        let settings = MasterOptionState(equalizerEnabled: true, compressorEnabled: false,
+                                         limiterEnabled: true, visualizerEnabled: false)
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(MasterOptionState.self, from: data)
+        XCTAssertEqual(decoded, settings)
+    }
+
     func testSourceEffectScopesRoundTripAndLegacyDefaultsToAll() throws {
         var settings = HushSettings()
         settings.equalizerSources = ["music"]
@@ -195,6 +203,17 @@ final class HushTests: XCTestCase {
         XCTAssertEqual(decoded.pinnedSources, ["com.example.browser"])
         XCTAssertEqual(decoded.dismissedSources, ["com.example.hidden"])
         XCTAssertEqual(decoded.sourceNames["com.example.player"], "Player")
+    }
+
+    func testSourceOutputAssignmentsRoundTripAndLegacyDefaultsToFallback() throws {
+        var settings = HushSettings()
+        settings.sourceOutputs["com.example.player"] = "headphones"
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(HushSettings.self, from: data)
+        XCTAssertEqual(decoded.sourceOutputs["com.example.player"], "headphones")
+
+        let legacy = #"{"masterEnabled":true,"equalizerEnabled":true}"#.data(using: .utf8)!
+        XCTAssertTrue(try JSONDecoder().decode(HushSettings.self, from: legacy).sourceOutputs.isEmpty)
     }
 
     func testOlderOutputProfileDecode() throws {

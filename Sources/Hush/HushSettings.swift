@@ -52,6 +52,13 @@ struct DynamicsSettings: Codable {
     }
 }
 
+struct MasterOptionState: Codable, Equatable {
+    var equalizerEnabled: Bool
+    var compressorEnabled: Bool
+    var limiterEnabled: Bool
+    var visualizerEnabled: Bool
+}
+
 enum SourceScope: String, Codable, Equatable {
     case all
     case only
@@ -106,6 +113,7 @@ struct HushSettings: Codable {
 
     var masterEnabled = true
     var equalizerEnabled = true
+    var masterRestoreState: MasterOptionState?
     /// nil means all discovered sources; an empty set means no sources.
     var equalizerSources: Set<String>? = nil
     var dynamicsSources: Set<String>? = nil
@@ -116,6 +124,7 @@ struct HushSettings: Codable {
     var equalizerScope: SourceScope = .all
     var dynamicsScope: SourceScope = .all
     var showMenuBar = true
+    var visualizerEnabled = true
     var selectedPreset = "Flat"
     var bands = Array(repeating: 0.0, count: 10)
     var preamp = 0.0
@@ -132,16 +141,19 @@ struct HushSettings: Codable {
     var pinnedSources: Set<String> = []
     var dismissedSources: Set<String> = []
     var sourceNames: [String: String] = [:]
+    /// Optional per-source output assignment. Missing or invalid assignments use the
+    /// current default output, preserving the original single-output behavior.
+    var sourceOutputs: [String: String] = [:]
     var shortcuts: [String: KeyBinding] = [:]
 
     private enum CodingKeys: String, CodingKey {
-        case masterEnabled, equalizerEnabled, equalizerSources, dynamicsSources,
+        case masterEnabled, equalizerEnabled, masterRestoreState, equalizerSources, dynamicsSources,
              equalizerOnlySources, equalizerExcludedSources, dynamicsOnlySources, dynamicsExcludedSources,
              equalizerScope, dynamicsScope,
-             showMenuBar, selectedPreset, bands, preamp,
+             showMenuBar, visualizerEnabled, selectedPreset, bands, preamp,
              balance, outputTrim, activeOutputUID, deviceProfiles, customPresets,
              autoPreamp,
-             volumes, mutedApps, manualSources, pinnedSources, dismissedSources, sourceNames, shortcuts, dynamics
+             volumes, mutedApps, manualSources, pinnedSources, dismissedSources, sourceNames, sourceOutputs, shortcuts, dynamics
     }
 
     init() {}
@@ -150,6 +162,7 @@ struct HushSettings: Codable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         masterEnabled = try values.decodeIfPresent(Bool.self, forKey: .masterEnabled) ?? true
         equalizerEnabled = try values.decodeIfPresent(Bool.self, forKey: .equalizerEnabled) ?? true
+        masterRestoreState = try values.decodeIfPresent(MasterOptionState.self, forKey: .masterRestoreState)
         equalizerSources = try values.decodeIfPresent(Set<String>.self, forKey: .equalizerSources)
         dynamicsSources = try values.decodeIfPresent(Set<String>.self, forKey: .dynamicsSources)
         let decodedEqualizerScope = try values.decodeIfPresent(SourceScope.self, forKey: .equalizerScope) ??
@@ -167,6 +180,7 @@ struct HushSettings: Codable {
         equalizerScope = decodedEqualizerScope
         dynamicsScope = decodedDynamicsScope
         showMenuBar = try values.decodeIfPresent(Bool.self, forKey: .showMenuBar) ?? true
+        visualizerEnabled = try values.decodeIfPresent(Bool.self, forKey: .visualizerEnabled) ?? true
         selectedPreset = try values.decodeIfPresent(String.self, forKey: .selectedPreset) ?? "Flat"
         bands = try values.decodeIfPresent([Double].self, forKey: .bands) ?? Array(repeating: 0, count: 10)
         preamp = try values.decodeIfPresent(Double.self, forKey: .preamp) ?? 0
@@ -183,6 +197,7 @@ struct HushSettings: Codable {
         pinnedSources = try values.decodeIfPresent(Set<String>.self, forKey: .pinnedSources) ?? []
         dismissedSources = try values.decodeIfPresent(Set<String>.self, forKey: .dismissedSources) ?? []
         sourceNames = try values.decodeIfPresent([String: String].self, forKey: .sourceNames) ?? [:]
+        sourceOutputs = try values.decodeIfPresent([String: String].self, forKey: .sourceOutputs) ?? [:]
         shortcuts = try values.decodeIfPresent([String: KeyBinding].self, forKey: .shortcuts) ?? [:]
     }
 

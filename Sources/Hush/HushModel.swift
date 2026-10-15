@@ -46,6 +46,10 @@ final class HushModel: ObservableObject {
     }
 
     func start() {
+        guard settings.masterEnabled else {
+            timer = nil
+            return
+        }
         audio.startMonitoring(on: audioQueue) { [weak self] in
             DispatchQueue.main.async { self?.refresh() }
         }
@@ -64,6 +68,7 @@ final class HushModel: ObservableObject {
     }
 
     func refresh() {
+        guard settings.masterEnabled else { return }
         guard !audioBusy else { return }
         let devices = audio.outputDevices()
         if outputDevices != devices { outputDevices = devices }
@@ -71,6 +76,7 @@ final class HushModel: ObservableObject {
             settings.activateOutput(selected.id)
             settings.save()
         }
+
         let discovered = audio.discover()
         let allApplications = audio.allApplications()
         if !sourceApps.elementsEqual(allApplications, by: {
@@ -97,22 +103,92 @@ final class HushModel: ObservableObject {
                 self.audioBusy = false
             }
         }
+
+    }
+
+    func refreshDiagnostics() {
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            let value = self.audio.diagnostics()
+            DispatchQueue.main.async { self.diagnostics.value = value }
+        }
     }
 
     func change(_ edit: (inout HushSettings) -> Void) {
         let wasEnabled = settings.masterEnabled
+        let previousOptions = MasterOptionState(
+            equalizerEnabled: settings.equalizerEnabled,
+            compressorEnabled: settings.dynamics.compressorEnabled,
+            limiterEnabled: settings.dynamics.limiterEnabled,
+            visualizerEnabled: settings.visualizerEnabled
+        )
         edit(&settings)
+        if wasEnabled && !settings.masterEnabled {
+            settings.masterRestoreState = previousOptions
+            settings.equalizerEnabled = false
+            settings.dynamics.compressorEnabled = false
+            settings.dynamics.limiterEnabled = false
+            settings.visualizerEnabled = false
+        } else if !wasEnabled && settings.masterEnabled {
+            let restore = settings.masterRestoreState
+            settings.equalizerEnabled = restore?.equalizerEnabled ?? settings.equalizerEnabled
+            settings.dynamics.compressorEnabled = restore?.compressorEnabled ?? settings.dynamics.compressorEnabled
+            settings.dynamics.limiterEnabled = restore?.limiterEnabled ?? settings.dynamics.limiterEnabled
+            settings.visualizerEnabled = restore?.visualizerEnabled ?? settings.visualizerEnabled
+            settings.masterRestoreState = nil
+        } else if !settings.masterEnabled {
+            settings.equalizerEnabled = false
+            settings.dynamics.compressorEnabled = false
+            settings.dynamics.limiterEnabled = false
+            settings.visualizerEnabled = false
+        }
         if !settings.activeOutputUID.isEmpty {
             settings.deviceProfiles[settings.activeOutputUID] = settings.currentProfile
         }
         settings.save()
         let snapshot = settings
-        audioQueue.async { [weak self] in self?.audio.apply(snapshot) }
-        if wasEnabled != settings.masterEnabled { refresh() }
+        if wasEnabled != settings.masterEnabled {
+            if settings.masterEnabled {
+                audio.startMonitoring(on: audioQueue) { [weak self] in
+                    DispatchQueue.main.async { self?.refresh() }
+                }
+                do {
+                    try audio.prepare()
+                } catch {
+                    audioError = error.localizedDescription
+                }
+                if timer == nil {
+                    timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
+                        [weak self] _ in self?.refresh()
+                    }
+                }
+                refresh()
+            } else {
+                timer?.invalidate()
+                timer = nil
+                audio.stopMonitoring()
+                audioQueue.sync { audio.stop() }
+            }
+        } else if settings.masterEnabled {
+            audioQueue.async { [weak self] in self?.audio.apply(snapshot) }
+        }
     }
 
     func setVolume(_ id: String, _ value: Double) {
         change { $0.volumes[id] = value }
+    }
+
+    /// Assign a source to a physical output. Passing nil removes the assignment
+    /// and restores the default-output fallback.
+    func setSourceOutput(_ sourceID: String, _ outputUID: String?) {
+        change { settings in
+            if let outputUID, !outputUID.isEmpty {
+                settings.sourceOutputs[sourceID] = outputUID
+            } else {
+                settings.sourceOutputs.removeValue(forKey: sourceID)
+            }
+        }
+        refresh()
     }
 
     func toggleMute(_ id: String) {

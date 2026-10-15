@@ -40,13 +40,31 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     private var settingsWindow: NSWindow?
+    private var iconObserver: Any?
+    private var visualizerTimer: Timer?
+    private var visualizerLevels = Array(repeating: 0.0, count: 8)
+    private var lastRenderedBands: [Double]?
+    private var lastRenderedEnabled = false
+    private var lastRenderedVisualizer = false
+    private var hasRenderedIcon = false
+    private let bundledIconSVG = """
+    <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"><rect x="15" y="15" width="98" height="98" rx="28"/><path d="M30 70 C40 70 40 48 50 48 S60 83 72 83 S85 58 98 58"/></g></svg>
+    """
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        iconObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.updateStatusIcon() }
         updateVisibility()
         model.start()
+        configureVisualizerTimer()
     }
 
-    func applicationWillTerminate(_ notification: Notification) { model.shutdown() }
+    func applicationWillTerminate(_ notification: Notification) {
+        if let iconObserver { NotificationCenter.default.removeObserver(iconObserver) }
+        visualizerTimer?.invalidate()
+        model.shutdown()
+    }
 
     func applicationDidResignActive(_ notification: Notification) { popover?.close() }
 
@@ -74,17 +92,83 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             NSApp.setActivationPolicy(.accessory)
             if statusItem == nil {
                 let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-                item.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Hush")
                 item.button?.action = #selector(togglePanel)
                 item.button?.target = self
                 statusItem = item
             }
+            updateStatusIcon()
         } else {
             popover?.close()
             if let statusItem { NSStatusBar.system.removeStatusItem(statusItem); self.statusItem = nil }
             NSApp.setActivationPolicy(.regular)
             showSettings()
         }
+    }
+
+    private func updateStatusIcon() {
+        configureVisualizerTimer()
+        guard let button = statusItem?.button else { return }
+        let visualizer = model.settings.masterEnabled && model.settings.visualizerEnabled
+        let bands = model.diagnostics.value.bandLevels
+        if hasRenderedIcon && visualizer == lastRenderedVisualizer &&
+            model.settings.masterEnabled == lastRenderedEnabled &&
+            (!visualizer || bands == lastRenderedBands) {
+            return
+        }
+        hasRenderedIcon = true
+        lastRenderedEnabled = model.settings.masterEnabled
+        lastRenderedVisualizer = visualizer
+        lastRenderedBands = bands
+        if visualizer {
+            button.image = visualizerImage(bands: bands)
+            button.image?.isTemplate = true
+        } else if let image = NSImage(data: Data(bundledIconSVG.utf8)) {
+            image.isTemplate = true
+            image.size = NSSize(width: 18, height: 18)
+            button.image = image
+        } else {
+            button.image = NSImage(systemSymbolName: "waveform.slash", accessibilityDescription: "Hush disabled")
+        }
+        button.toolTip = model.settings.masterEnabled ? "Hush enabled" : "Hush disabled"
+    }
+
+    private func configureVisualizerTimer() {
+        let shouldRun = model.settings.masterEnabled && model.settings.visualizerEnabled &&
+            statusItem != nil
+        if shouldRun, visualizerTimer == nil {
+            visualizerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 15.0, repeats: true) {
+                [weak self] _ in
+                self?.model.refreshDiagnostics()
+                self?.updateStatusIcon()
+            }
+        } else if !shouldRun {
+            visualizerTimer?.invalidate()
+            visualizerTimer = nil
+        }
+    }
+
+    private func visualizerImage(bands: [Double]) -> NSImage {
+        for index in visualizerLevels.indices {
+            let target = min(1, max(0, index < bands.count ? bands[index] * 3.5 : 0))
+            let desired = target
+            let response = desired > visualizerLevels[index] ? 0.65 : 0.22
+            visualizerLevels[index] += (desired - visualizerLevels[index]) * response
+        }
+        let image = NSImage(size: NSSize(width: 18, height: 18))
+        image.lockFocus()
+        NSColor.white.setStroke()
+        NSColor.white.setFill()
+        let barWidth = 1.25
+        let gap = 0.7
+        for (index, value) in visualizerLevels.enumerated() {
+            let height = max(1.4, CGFloat(value) * 15)
+            let x = 1.0 + CGFloat(index) * (barWidth + gap)
+            let rect = NSRect(x: x, y: (18 - height) / 2, width: barWidth, height: height)
+            NSBezierPath(roundedRect: rect, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
+        }
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
     }
 
     @objc private func togglePanel() {
