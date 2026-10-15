@@ -125,6 +125,7 @@ struct HushSettings: Codable {
     var dynamicsScope: SourceScope = .all
     var showMenuBar = true
     var visualizerEnabled = true
+    var automaticUpdates = true
     var selectedPreset = "Flat"
     var bands = Array(repeating: 0.0, count: 10)
     var preamp = 0.0
@@ -150,7 +151,7 @@ struct HushSettings: Codable {
         case masterEnabled, equalizerEnabled, masterRestoreState, equalizerSources, dynamicsSources,
              equalizerOnlySources, equalizerExcludedSources, dynamicsOnlySources, dynamicsExcludedSources,
              equalizerScope, dynamicsScope,
-             showMenuBar, visualizerEnabled, selectedPreset, bands, preamp,
+             showMenuBar, visualizerEnabled, automaticUpdates, selectedPreset, bands, preamp,
              balance, outputTrim, activeOutputUID, deviceProfiles, customPresets,
              autoPreamp,
              volumes, mutedApps, manualSources, pinnedSources, dismissedSources, sourceNames, sourceOutputs, shortcuts, dynamics
@@ -181,6 +182,7 @@ struct HushSettings: Codable {
         dynamicsScope = decodedDynamicsScope
         showMenuBar = try values.decodeIfPresent(Bool.self, forKey: .showMenuBar) ?? true
         visualizerEnabled = try values.decodeIfPresent(Bool.self, forKey: .visualizerEnabled) ?? true
+        automaticUpdates = try values.decodeIfPresent(Bool.self, forKey: .automaticUpdates) ?? true
         selectedPreset = try values.decodeIfPresent(String.self, forKey: .selectedPreset) ?? "Flat"
         bands = try values.decodeIfPresent([Double].self, forKey: .bands) ?? Array(repeating: 0, count: 10)
         preamp = try values.decodeIfPresent(Double.self, forKey: .preamp) ?? 0

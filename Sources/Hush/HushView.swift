@@ -575,6 +575,7 @@ struct SettingsView: View {
     @ObservedObject var model: HushModel
     let visibilityChanged: () -> Void
     let undoManager: UndoManager
+    let updatePreferenceChanged: (Bool) -> Void
     @State private var presetName = ""
     @State private var preampStart = 0.0
     @State private var preampPreset = "Flat"
@@ -900,6 +901,13 @@ struct SettingsView: View {
                 set: { value in model.change { $0.showMenuBar = value }; visibilityChanged() }))
             Toggle("Audio visualizer in menu bar", isOn: Binding(get: { model.settings.visualizerEnabled },
                 set: { value in model.change { $0.visualizerEnabled = value } }))
+            Toggle("Automatically update from GitHub", isOn: Binding(get: { model.settings.automaticUpdates },
+                set: { value in
+                    model.change { $0.automaticUpdates = value }
+                    updatePreferenceChanged(value)
+                }))
+            Text("Checks GitHub once a day and asks before installing an update.")
+                .font(.caption).foregroundStyle(.secondary)
             Text("Visualizer off uses the Hush icon.")
                 .font(.caption).foregroundStyle(.secondary)
             Spacer()

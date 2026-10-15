@@ -36,6 +36,7 @@ struct HushApp {
 private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate,
                                   NSMenuItemValidation {
     private let model = HushModel()
+    private let updater = HushUpdater()
     private let undoManager = UndoManager()
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
@@ -57,12 +58,14 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         ) { [weak self] _ in self?.updateStatusIcon() }
         updateVisibility()
         model.start()
+        updater.start(enabled: model.settings.automaticUpdates)
         configureVisualizerTimer()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         if let iconObserver { NotificationCenter.default.removeObserver(iconObserver) }
         visualizerTimer?.invalidate()
+        updater.stop()
         model.shutdown()
     }
 
@@ -199,7 +202,10 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             window.center()
             window.contentView = NSHostingView(rootView: SettingsView(model: model,
                                                                       visibilityChanged: { [weak self] in self?.updateVisibility() },
-                                                                      undoManager: undoManager))
+                                                                      undoManager: undoManager,
+                                                                      updatePreferenceChanged: { [weak self] enabled in
+                                                                          self?.updater.setEnabled(enabled)
+                                                                      }))
             settingsWindow = window
         }
         settingsWindow?.makeKeyAndOrderFront(nil)

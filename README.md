@@ -4,7 +4,7 @@
 captures exposed application audio, mixes it back to the selected output, and
 applies optional per-source volume, mute, EQ, compression, and limiting.
 
-**[Download Hush 0.2.3](https://github.com/Duncanyu/hush/releases/tag/v0.2.3)** ·
+**[Download Hush 0.3.0](https://github.com/Duncanyu/hush/releases/tag/v0.3.0)** ·
 [Install](#download-and-install) · [Use](#use) ·
 [Performance and latency](#performance-and-latency)
 
@@ -12,8 +12,8 @@ Hush requires an Apple Silicon Mac running macOS 14.2 or later.
 
 ## Download and install
 
-Download **Hush-v0.2.3-macos-arm64.zip** from the
-[0.2.3 release](https://github.com/Duncanyu/hush/releases/tag/v0.2.3).
+Download **Hush-v0.3.0-macos-arm64.zip** from the
+[0.3.0 release](https://github.com/Duncanyu/hush/releases/tag/v0.3.0).
 
 1. Unzip the download and drag **Hush.app** into **Applications**.
 2. Open Hush. This build is ad hoc signed and is **not notarized**. If macOS
@@ -30,7 +30,7 @@ Download **Hush-v0.2.3-macos-arm64.zip** from the
 The release includes a SHA-256 checksum file. Place it beside the ZIP and run:
 
 ```sh
-shasum -a 256 -c Hush-v0.2.3-macos-arm64.zip.sha256
+shasum -a 256 -c Hush-v0.3.0-macos-arm64.zip.sha256
 ```
 
 ## Use
@@ -154,3 +154,9 @@ controlled by macOS.
   heading hierarchy as the mixer and equalizer.
 - Restored the colorful Hush application icon while keeping the menu-bar
   waveform monochrome and appearance-aware.
+
+### 0.3.0
+
+- Added optional automatic updates from the Hush GitHub releases.
+- Added checksum verification before an update is installed.
+- Added a General setting to enable or disable automatic updates.

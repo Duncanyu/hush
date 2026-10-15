@@ -163,6 +163,18 @@ final class HushTests: XCTestCase {
         XCTAssertEqual(decoded, settings)
     }
 
+    func testAutomaticUpdatesDefaultOnAndPersists() throws {
+        let settings = HushSettings()
+        XCTAssertTrue(settings.automaticUpdates)
+        var disabled = settings
+        disabled.automaticUpdates = false
+        let data = try JSONEncoder().encode(disabled)
+        XCTAssertFalse(try JSONDecoder().decode(HushSettings.self, from: data).automaticUpdates)
+
+        let legacy = #"{"masterEnabled":true,"equalizerEnabled":true}"#.data(using: .utf8)!
+        XCTAssertTrue(try JSONDecoder().decode(HushSettings.self, from: legacy).automaticUpdates)
+    }
+
     func testSourceEffectScopesRoundTripAndLegacyDefaultsToAll() throws {
         var settings = HushSettings()
         settings.equalizerSources = ["music"]
