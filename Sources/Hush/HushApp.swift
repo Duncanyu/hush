@@ -17,8 +17,16 @@ struct HushApp {
         let editMenu = NSMenu(title: "Edit")
         let undo = editMenu.addItem(withTitle: "Undo", action: #selector(HushDelegate.undo(_:)), keyEquivalent: "z")
         undo.target = delegate
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a")
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
+        let windowMenuItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)),
+                           keyEquivalent: "w")
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+        app.windowsMenu = windowMenu
         app.mainMenu = mainMenu
         app.delegate = delegate
         app.run()
@@ -83,6 +91,7 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         guard let button = statusItem?.button else { return }
         if popover?.isShown == true { popover?.close(); return }
         model.refresh()
+        NSApp.activate(ignoringOtherApps: true)
         let panel = NSPopover()
         panel.behavior = .transient
         panel.contentSize = NSSize(width: 400, height: 510)
@@ -91,7 +100,7 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
             quit: { NSApp.terminate(nil) }))
         panel.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover = panel
-        NSApp.activate(ignoringOtherApps: true)
+        panel.contentViewController?.view.window?.makeKey()
     }
 
     private func showSettings() {

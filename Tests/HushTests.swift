@@ -35,15 +35,15 @@ final class HushTests: XCTestCase {
         left.withUnsafeMutableBufferPointer { l in
             right.withUnsafeMutableBufferPointer { r in AudioRingRead(ring, l.baseAddress, r.baseAddress, 2) }
         }
-        XCTAssertEqual(left, [7, 8])
-        XCTAssertEqual(AudioRingGetStats(ring).skippedFrames, 6)
+        XCTAssertEqual(left, [5, 6])
+        XCTAssertEqual(AudioRingGetStats(ring).skippedFrames, 4)
         let next: [Float] = [9, 10]
         next.withUnsafeBufferPointer { AudioRingWrite(ring, $0.baseAddress, nil, 2, 0) }
         left.withUnsafeMutableBufferPointer { l in
             right.withUnsafeMutableBufferPointer { r in AudioRingRead(ring, l.baseAddress, r.baseAddress, 2) }
         }
-        XCTAssertEqual(left, [9, 10])
-        XCTAssertEqual(AudioRingGetStats(ring).queuedFrames, 0)
+        XCTAssertEqual(left, [7, 8])
+        XCTAssertEqual(AudioRingGetStats(ring).queuedFrames, 2)
     }
 
     func testEqualizerRangeAndResponse() throws {
@@ -153,6 +153,48 @@ final class HushTests: XCTestCase {
 
         let legacy = #"{"selectedPreset":"Flat","bands":[0,0,0,0,0,0,0,0,0,0],"preamp":0,"balance":0,"outputTrim":1}"#.data(using: .utf8)!
         XCTAssertFalse(try JSONDecoder().decode(DeviceProfile.self, from: legacy).autoPreamp)
+    }
+
+    func testSourceEffectScopesRoundTripAndLegacyDefaultsToAll() throws {
+        var settings = HushSettings()
+        settings.equalizerSources = ["music"]
+        settings.equalizerScope = .only
+        settings.equalizerOnlySources = ["music"]
+        settings.equalizerExcludedSources = ["browser"]
+        settings.dynamicsSources = []
+        settings.dynamicsScope = .excluding
+        settings.dynamicsExcludedSources = ["chat"]
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(HushSettings.self, from: data)
+        XCTAssertEqual(decoded.equalizerSources, ["music"])
+        XCTAssertEqual(decoded.equalizerScope, .only)
+        XCTAssertEqual(decoded.equalizerOnlySources, ["music"])
+        XCTAssertEqual(decoded.equalizerExcludedSources, ["browser"])
+        XCTAssertEqual(decoded.dynamicsSources, [])
+        XCTAssertEqual(decoded.dynamicsScope, .excluding)
+        XCTAssertEqual(decoded.dynamicsExcludedSources, ["chat"])
+
+        let legacy = #"{"masterEnabled":true,"equalizerEnabled":true}"#.data(using: .utf8)!
+        let old = try JSONDecoder().decode(HushSettings.self, from: legacy)
+        XCTAssertNil(old.equalizerSources)
+        XCTAssertNil(old.dynamicsSources)
+    }
+
+    func testMixerSourcesPersistIndependentlyFromActiveAudio() throws {
+        var settings = HushSettings()
+        settings.manualSources = ["com.example.player"]
+        settings.pinnedSources = ["com.example.browser"]
+        settings.dismissedSources = ["com.example.hidden"]
+        settings.sourceNames = [
+            "com.example.player": "Player",
+            "com.example.browser": "Browser"
+        ]
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(HushSettings.self, from: data)
+        XCTAssertEqual(decoded.manualSources, ["com.example.player"])
+        XCTAssertEqual(decoded.pinnedSources, ["com.example.browser"])
+        XCTAssertEqual(decoded.dismissedSources, ["com.example.hidden"])
+        XCTAssertEqual(decoded.sourceNames["com.example.player"], "Player")
     }
 
     func testOlderOutputProfileDecode() throws {

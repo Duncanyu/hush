@@ -13,6 +13,13 @@ private struct AudioKnob: View {
     let valueText: String
     let resetValue: Double?
     var logarithmic = false
+    @State private var dragStartAngle: Double?
+    @State private var lastDragAngle: Double?
+    @State private var dragStartFraction: Double?
+    @State private var accumulatedRotation = 0.0
+    var snapValue: Double?
+    var snapTolerance = 0.02
+    var snapStep: Double?
 
     private var fraction: Double {
         logarithmic ? log(value / range.lowerBound) / log(range.upperBound / range.lowerBound) :
@@ -25,13 +32,13 @@ private struct AudioKnob: View {
             range.lowerBound + amount * (range.upperBound - range.lowerBound)
     }
 
-    private func fraction(at location: CGPoint, in size: CGSize) -> Double {
+    private func angle(at location: CGPoint, in size: CGSize) -> Double {
         let center = CGPoint(x: size.width / 2, y: size.height / 2)
-        let angle = (atan2(location.y - center.y, location.x - center.x) * 180 / .pi + 360)
-            .truncatingRemainder(dividingBy: 360)
-        let progress = (angle - 135 + 360).truncatingRemainder(dividingBy: 360)
-        // The inactive bottom arc chooses the closer endpoint.
-        return progress <= 270 ? progress / 270 : (progress < 315 ? 1 : 0)
+        return atan2(location.y - center.y, location.x - center.x) * 180 / .pi
+    }
+
+    private func angularDistance(from start: Double, to end: Double) -> Double {
+        (end - start + 540).truncatingRemainder(dividingBy: 360) - 180
     }
 
     var body: some View {
@@ -43,16 +50,50 @@ private struct AudioKnob: View {
                 Circle().trim(from: 0, to: 0.75 * fraction)
                     .stroke(.blue, style: StrokeStyle(lineWidth: 7, lineCap: .round))
                     .rotationEffect(.degrees(135))
-                Circle().fill(.blue).frame(width: 9, height: 9)
-                    .offset(x: 41 * cos((135 + 270 * fraction) * .pi / 180),
-                            y: 41 * sin((135 + 270 * fraction) * .pi / 180))
+                Circle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .overlay(Circle().stroke(Color.secondary.opacity(0.25), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                    .frame(width: 76, height: 76)
+                Capsule().fill(.blue)
+                    .frame(width: 3, height: 14)
+                    .offset(y: -23)
+                    .rotationEffect(.degrees(-135 + 270 * fraction))
                 Text(valueText).font(.callout.weight(.semibold)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.62).frame(width: 68)
+                    .padding(.horizontal, 2)
+                    .background(Color(nsColor: .windowBackgroundColor))
             }
             .frame(width: 94, height: 94)
             .contentShape(Circle())
-            .gesture(DragGesture(minimumDistance: 2)
+            .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { drag in
-                    value = self.value(at: fraction(at: drag.location, in: CGSize(width: 94, height: 94)))
+                    let currentAngle = angle(at: drag.location, in: CGSize(width: 94, height: 94))
+                    if lastDragAngle == nil {
+                        dragStartAngle = currentAngle
+                        lastDragAngle = currentAngle
+                        dragStartFraction = fraction
+                        accumulatedRotation = 0
+                    } else {
+                        accumulatedRotation += angularDistance(from: lastDragAngle ?? currentAngle, to: currentAngle)
+                        lastDragAngle = currentAngle
+                    }
+                    let raw = self.value(at: (dragStartFraction ?? fraction) + accumulatedRotation / 270)
+                    let precision = abs(accumulatedRotation) >= 360
+                    if let snapStep, !precision {
+                        value = (raw / snapStep).rounded() * snapStep
+                    } else {
+                        value = raw
+                    }
+                }
+                .onEnded { _ in
+                    if let snapValue, abs(value - snapValue) <= snapTolerance {
+                        value = snapValue
+                    }
+                    dragStartAngle = nil
+                    lastDragAngle = nil
+                    dragStartFraction = nil
+                    accumulatedRotation = 0
                 })
             .onTapGesture(count: 2) { if let resetValue { value = resetValue } }
             .accessibilityElement(children: .ignore)
@@ -64,8 +105,9 @@ private struct AudioKnob: View {
                 case .decrement: value = self.value(at: fraction - 0.01)
                 @unknown default: break
                 }
+
             }
-            Text(title).font(.callout.weight(.medium)).lineLimit(1)
+            Text(title).font(.callout.weight(.medium)).lineLimit(1).minimumScaleFactor(0.65)
             HStack(spacing: 3) {
                 TextField(title, value: Binding(get: { value * scale },
                                                 set: { value = min(range.upperBound,
@@ -77,8 +119,50 @@ private struct AudioKnob: View {
                 Text(unit).foregroundStyle(.secondary).font(.caption)
             }
         }
-        .frame(maxWidth: .infinity)
+
+        .frame(maxWidth: .infinity, minHeight: 184)
         .padding(12).background(panel, in: RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private struct SourceScopePicker: View {
+    let title: String
+    let apps: [AudioApp]
+    let scope: SourceScope
+    let selection: Set<String>?
+    let updateScope: (SourceScope) -> Void
+    let updateSelection: (Set<String>?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.callout.weight(.medium))
+            Picker("Mode", selection: Binding(get: { scope }, set: updateScope)) {
+                Text("All").tag(SourceScope.all)
+                Text("Only").tag(SourceScope.only)
+                Text("Excluding").tag(SourceScope.excluding)
+            }
+            .pickerStyle(.segmented)
+            if scope != .all {
+                DisclosureGroup(selection?.isEmpty == false ? "\(selection!.count) applications selected" :
+                                    "Choose applications") {
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)], spacing: 4) {
+                            ForEach(apps) { app in
+                                Toggle(app.name, isOn: Binding(get: { selection?.contains(app.id) == true },
+                                                               set: { enabled in
+                                    var next = selection ?? []
+                                    if enabled { next.insert(app.id) } else { next.remove(app.id) }
+                                    updateSelection(next)
+                                }))
+                                .toggleStyle(.checkbox)
+                                .font(.caption)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 130)
+                }
+            }
+        }
     }
 }
 
@@ -179,6 +263,17 @@ private struct AppSlider: View {
             }
             .buttonStyle(.borderless)
             .help(model.settings.mutedApps.contains(app.id) ? "Unmute" : "Mute")
+            Button { model.togglePin(app.id) } label: {
+                Image(systemName: model.settings.pinnedSources.contains(app.id) ? "pin.fill" : "pin")
+                    .frame(width: 24)
+            }
+            .buttonStyle(.borderless)
+            .help(model.settings.pinnedSources.contains(app.id) ? "Unpin source" : "Pin source")
+            Button { model.removeSource(app.id) } label: {
+                Image(systemName: "minus.circle").frame(width: 24)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove source")
         }
         if showShortcut {
             HStack {
@@ -373,13 +468,14 @@ struct QuickPanel: View {
                     HStack {
                         Text("Applications").font(.headline)
                         Spacer()
-                        Text("\(model.apps.count) active").foregroundStyle(.secondary)
+                        Text("\(model.mixerApps.count) available").foregroundStyle(.secondary)
                     }
-                    if model.apps.isEmpty {
-                        Text("Apps playing audio appear here.").foregroundStyle(.secondary)
+                    if model.mixerApps.isEmpty {
+                        Text("Apps playing audio or added to the mixer appear here.")
+                            .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 62)
                     } else {
-                        ForEach(model.apps) { app in AppSlider(model: model, app: app) }
+                        ForEach(model.mixerApps) { app in AppSlider(model: model, app: app) }
                     }
                 }
                 .padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -503,18 +599,21 @@ struct SettingsView: View {
                 AudioKnob(title: "System", value: Binding(get: { device?.volume ?? 0 },
                                                             set: { model.setSystemVolume($0) }),
                           range: 0...1, scale: 100, unit: "%", digits: 0,
-                          valueText: device?.volume.map { "\(Int($0 * 100))%" } ?? "—", resetValue: nil)
+                          valueText: device?.volume.map { "\(Int($0 * 100))%" } ?? "—", resetValue: nil,
+                          snapStep: 0.05)
                     .disabled(device?.volume == nil)
                 AudioKnob(title: "Hush level", value: Binding(get: { model.settings.outputTrim },
                                                                 set: { model.setOutputTrim($0) }),
                           range: 0...1, scale: 100, unit: "%", digits: 0,
-                          valueText: "\(Int(model.settings.outputTrim * 100))%", resetValue: 1)
+                          valueText: "\(Int(model.settings.outputTrim * 100))%", resetValue: 1,
+                          snapStep: 0.05)
+
                 AudioKnob(title: "Balance", value: Binding(get: { model.settings.balance },
                                                              set: { model.setBalance($0) }),
                           range: -1...1, scale: 100, unit: "%", digits: 0,
                           valueText: model.settings.balance < -0.01 ? "L \(Int(-model.settings.balance * 100))" :
                             model.settings.balance > 0.01 ? "R \(Int(model.settings.balance * 100))" : "Center",
-                          resetValue: 0)
+                          resetValue: 0, snapValue: 0, snapTolerance: 0.025, snapStep: 0.05)
             }
         }
     }
@@ -530,8 +629,17 @@ struct SettingsView: View {
                     Toggle("On", isOn: Binding(get: { model.settings.masterEnabled },
                                                 set: { value in model.change { $0.masterEnabled = value } }))
                 }
-                if model.apps.isEmpty { Text("Play audio in an app to see it here.").foregroundStyle(.secondary) }
-                ForEach(model.apps) { app in
+                Menu {
+                    ForEach(model.addableSourceApps.filter { app in
+                        !model.mixerApps.contains(where: { existing in existing.id == app.id })
+                    }) { app in
+                        Button(app.name) { model.addSource(app) }
+                    }
+                } label: {
+                    Label("Add audio source", systemImage: "plus")
+                }
+                if model.mixerApps.isEmpty { Text("Play audio or add a source to see it here.").foregroundStyle(.secondary) }
+                ForEach(model.mixerApps) { app in
                     VStack(spacing: 10) { AppSlider(model: model, app: app, showShortcut: true) }
                         .padding(14).background(panel, in: RoundedRectangle(cornerRadius: 12))
                 }
@@ -603,6 +711,11 @@ struct SettingsView: View {
             Toggle("Auto preamp", isOn: Binding(get: { model.settings.autoPreamp },
                                                 set: { model.setAutoPreamp($0) }))
                 .help("Automatically attenuates the equalizer by the highest boost to preserve headroom.")
+            SourceScopePicker(title: "EQ sources", apps: model.sourceApps,
+                              scope: model.settings.equalizerScope,
+                              selection: model.settings.equalizerSources,
+                              updateScope: model.setEqualizerScope,
+                              updateSelection: model.setEqualizerSources)
             Text("Lower the preamp when boosting several bands to preserve headroom.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
@@ -626,7 +739,8 @@ struct SettingsView: View {
                                         set: { value in model.updateDynamics { $0[keyPath: key] = value } }),
                          range: range, scale: scale, unit: unit, digits: digits,
                          valueText: String(format: "%.*f %@", digits, amount * scale, unit),
-                         resetValue: reset, logarithmic: logarithmic)
+                         resetValue: reset, logarithmic: logarithmic,
+                         snapStep: digits == 0 ? 1 : pow(10, -Double(digits)))
     }
 
     private var dynamics: some View {
@@ -634,6 +748,11 @@ struct SettingsView: View {
             Text("Dynamics").font(.title2.bold())
             Text("Optional processing after the equalizer. Each effect is bypassed when off.")
                 .foregroundStyle(.secondary)
+            SourceScopePicker(title: "Dynamics sources", apps: model.sourceApps,
+                              scope: model.settings.dynamicsScope,
+                              selection: model.settings.dynamicsSources,
+                              updateScope: model.setDynamicsScope,
+                              updateSelection: model.setDynamicsSources)
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Label("Compressor", systemImage: "waveform.path").font(.headline)

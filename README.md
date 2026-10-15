@@ -1,43 +1,129 @@
 # Hush
 
-**Version 0.1.3 — unreleased**
+**A low-latency per-app mixer and system-wide equalizer for macOS.** Hush
+captures exposed application audio, mixes it back to the selected output, and
+applies optional per-source volume, mute, EQ, compression, and limiting.
 
-A native macOS menu bar mixer and 10-band system audio equalizer. Requires macOS 14.2 or later.
+**[Download Hush 0.1.4](https://github.com/Duncanyu/hush/releases/tag/v0.1.4)** ·
+[Install](#download-and-install) · [Use](#use) ·
+[Performance and latency](#performance-and-latency)
 
-Build with `./build.sh`, then open `build/Hush.app`. The first active audio app prompts for **System Audio Recording** permission. Hush does not install a driver. It uses private Core Audio process taps, a shared AVAudioEngine, and Apple-supplied audio units: the 10-band EQ, dynamics processor, and peak limiter. The ring buffer only transfers captured PCM between Core Audio callbacks; it performs no signal processing.
+Hush requires an Apple Silicon Mac running macOS 14.2 or later.
 
-Click the waveform in the menu bar for quick controls. **Full settings** has a dashboard for output and presets, plus an **Advanced** tab with the app mixer, 10-band EQ graph, preamp, interactive output dials, routing diagnostics, and optional compressor and peak limiter. Drag around a dial or enter an exact number; double-click a processing dial to reset it. The compressor shows live gain reduction. Drag an EQ point or enter a gain from −24 to +24 dB; Command-Z undoes edits. Gaming, Movie, Music, custom presets, and dynamics settings are saved separately for each output device. Hush can switch the default output and control its hardware volume when that device supports it. The macOS Control Center volume slider stays Apple's UI and reflects the same device volume.
+## Download and install
 
-Hiding the menu bar icon shows Hush in the Dock. Hush keeps its low-cost audio render graph warm while processing is enabled, including during idle periods, so a newly active app does not wait for the shared engine to start. Routes are retained while their processes remain alive and are removed when those processes exit or the output device changes. Core Audio event listeners detect process output immediately, with a low-frequency safety refresh as a fallback. Per-app taps can still take a short time when an app first appears or the output device changes. Quit Hush to return audio to the normal path.
+Download **Hush-v0.1.4-macos-arm64.zip** from the
+[0.1.4 release](https://github.com/Duncanyu/hush/releases/tag/v0.1.4).
 
-Some protected or exclusive audio streams cannot be tapped by macOS. The mixer lists processes with active output streams; a stream can remain listed briefly after playback pauses. Audio processing is limited to streams that Core Audio exposes to Hush. Enabled dynamics add their own processing latency; both effects are bypassed by default. Auto preamp can attenuate the equalizer by the highest boost to preserve headroom.
+1. Unzip the download and drag **Hush.app** into **Applications**.
+2. Open Hush. This build is ad hoc signed and is **not notarized**. If macOS
+   blocks the app, open **System Settings → Privacy & Security → Security →
+   Open Anyway**, confirm, and launch Hush again. See
+   [Apple's instructions](https://support.apple.com/en-us/102445). Only bypass
+   this warning for a copy downloaded from this repository.
+3. Allow **System Audio Recording** when macOS asks. Hush does not install a
+   driver. If you change this permission in System Settings, quit and reopen
+   Hush.
+4. Hush appears in the menu bar. Click the waveform icon for quick controls,
+   or choose **Full settings** for the complete mixer and processing controls.
 
-## AirPods latency investigation
+The release includes a SHA-256 checksum file. Place it beside the ZIP and run:
 
-Hush's current per-app routing path is:
+```sh
+shasum -a 256 -c Hush-v0.1.4-macos-arm64.zip.sha256
+```
+
+## Use
+
+- Click the menu-bar waveform for system volume, output selection, app levels,
+  mute, EQ presets, and processing status. The popup is keyboard-focused when
+  opened.
+- Choose **Full settings** for the dashboard, advanced mixer, 10-band EQ,
+  dynamics, output controls, shortcuts, and general settings.
+- Active applications are discovered automatically. Use **Add audio source**
+  to add an application before it plays audio; manually added sources stay in
+  the mixer and are pinned automatically.
+- Pin an automatically discovered application to keep it in the mixer after
+  it stops playing. Pinned applications also remain available in the Add audio
+  source menu, including when they are not currently running.
+- Remove a source from the mixer without permanently blacklisting it. If it
+  plays audio again later, Hush can discover it again.
+- Adjust each source's volume or mute state independently. Double-click a
+  processing dial to reset it. Command-Z undoes EQ edits.
+- Select **All**, **Only**, or **Excluding** for EQ and dynamics sources.
+  Only and Excluding keep separate application selections.
+- EQ presets, custom presets, dynamics settings, source selections, mixer
+  sources, and output profiles are saved independently for each output device.
+- Hush can switch the default output and control hardware volume when the
+  device supports it. The macOS Control Center volume slider remains Apple's
+  UI and reflects the same device volume.
+- Hush supports ⌘W to close the settings window and ⌘A through the standard
+  macOS responder chain.
+
+Hush keeps the low-cost audio render graph warm while processing is enabled,
+including during idle periods, so a newly active app does not wait for the
+shared engine to start. Core Audio event listeners detect process output
+quickly, with a low-frequency refresh as a fallback. Routes are retained while
+their processes remain alive and are removed when those processes exit or the
+output device changes.
+
+Some protected or exclusive audio streams cannot be tapped by macOS. Hush can
+only process streams that Core Audio exposes. A stream can remain listed
+briefly after playback pauses. Enabled dynamics add processing latency and are
+off by default. Auto preamp can attenuate the equalizer by the highest boost to
+preserve headroom.
+
+## Performance and latency
+
+The stable audio path is:
 
 ```text
 process tap → per-app aggregate device → capture IOProc → ring buffer
 → AVAudioEngine → app mixer → EQ/effects → output device
 ```
 
-This uses separate clock domains for capture and playback. The ring buffer bounds
-the queued frames and drops stale backlog, but it does not synchronize the tap
-clock with the output clock or preserve audio/video timestamps. The difference
-is usually less apparent on built-in output and more noticeable on Bluetooth
-devices such as AirPods, whose reported output latency can be approximately
-160 ms. Pause/resume transitions can make the mismatch more apparent because
-the tap, ring, AVAudioEngine output client, and Bluetooth device resume on
-independent schedules.
+The ring buffer uses a small safety margin to avoid crackling and discontinuity
+when Core Audio callbacks jitter. It permits a short backlog and trims only
+stale excess rather than discarding a whole render buffer. This preserves the
+latency improvement without sacrificing audio quality.
 
-The reported Hush effect latency (approximately 10.7 ms in one AirPods
-configuration) is not the complete end-to-end synchronization cost. Changing
-the ring size or polling interval cannot correct the underlying clock-domain
-problem. CoreAudioTapKit's single-clock design is a useful reference: it places
-the physical output and tap in one private aggregate, makes the physical output
-the clock master, enables maximum-quality tap drift compensation, and processes
-tap input directly into the aggregate output buffers in one IOProc. That design
-does not currently replace Hush's per-app mixer architecture; the limitation is
-documented here before making that larger architectural change.
+Hush's reported processing latency is not complete end-to-end latency. In one
+AirPods configuration, Hush reported approximately 10.7 ms of effect latency
+while the output device reported approximately 160 ms. The latter can include
+Bluetooth buffering. AirPods can therefore feel later than built-in output,
+particularly around pause and resume, even when Hush's processing contribution
+is small.
 
-This investigation is documented in v0.1.3. It is not a release.
+Hush intentionally retains its per-app mixer and existing AVAudioEngine
+pipeline. A single-clock aggregate-device experiment based on CoreAudioTapKit
+was tested and reverted because it corrupted real audio. The current design
+prioritizes clean playback, per-app controls, EQ, reliable short sounds, and
+safe device recovery over an unverified architectural rewrite.
+
+Automated validation for this release includes:
+
+- `swift test`: 12 tests covering ring-buffer behavior, EQ response, dynamics,
+  settings migration, output profiles, source scopes, and mixer persistence.
+- Release build with `./build.sh`.
+- Strict code-signature verification of the packaged application.
+
+Bluetooth end-to-end synchronization and subjective audio quality still depend
+on the output device and require real-world listening; the automated tests do
+not measure those properties.
+
+## Build from source
+
+Install Xcode's command line tools, then run:
+
+```sh
+swift test
+./build.sh
+open dist/Hush.app
+```
+
+The build script creates an arm64 `build/Hush.app`, ad hoc signs it, and copies
+it to `dist/Hush.app`. It does not produce a notarized distribution.
+
+Hush uses Apple's Core Audio, AVAudioEngine, AudioToolbox, and AppKit/SwiftUI.
+Audio capture permissions and the streams available for processing are
+controlled by macOS.

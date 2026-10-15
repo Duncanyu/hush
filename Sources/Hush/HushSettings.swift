@@ -52,6 +52,12 @@ struct DynamicsSettings: Codable {
     }
 }
 
+enum SourceScope: String, Codable, Equatable {
+    case all
+    case only
+    case excluding
+}
+
 struct DeviceProfile: Codable {
     var selectedPreset: String
     var bands: [Double]
@@ -100,6 +106,15 @@ struct HushSettings: Codable {
 
     var masterEnabled = true
     var equalizerEnabled = true
+    /// nil means all discovered sources; an empty set means no sources.
+    var equalizerSources: Set<String>? = nil
+    var dynamicsSources: Set<String>? = nil
+    var equalizerOnlySources: Set<String> = []
+    var equalizerExcludedSources: Set<String> = []
+    var dynamicsOnlySources: Set<String> = []
+    var dynamicsExcludedSources: Set<String> = []
+    var equalizerScope: SourceScope = .all
+    var dynamicsScope: SourceScope = .all
     var showMenuBar = true
     var selectedPreset = "Flat"
     var bands = Array(repeating: 0.0, count: 10)
@@ -113,13 +128,20 @@ struct HushSettings: Codable {
     var customPresets: [EQPreset] = []
     var volumes: [String: Double] = [:]
     var mutedApps: Set<String> = []
+    var manualSources: Set<String> = []
+    var pinnedSources: Set<String> = []
+    var dismissedSources: Set<String> = []
+    var sourceNames: [String: String] = [:]
     var shortcuts: [String: KeyBinding] = [:]
 
     private enum CodingKeys: String, CodingKey {
-        case masterEnabled, equalizerEnabled, showMenuBar, selectedPreset, bands, preamp,
+        case masterEnabled, equalizerEnabled, equalizerSources, dynamicsSources,
+             equalizerOnlySources, equalizerExcludedSources, dynamicsOnlySources, dynamicsExcludedSources,
+             equalizerScope, dynamicsScope,
+             showMenuBar, selectedPreset, bands, preamp,
              balance, outputTrim, activeOutputUID, deviceProfiles, customPresets,
              autoPreamp,
-             volumes, mutedApps, shortcuts, dynamics
+             volumes, mutedApps, manualSources, pinnedSources, dismissedSources, sourceNames, shortcuts, dynamics
     }
 
     init() {}
@@ -128,6 +150,22 @@ struct HushSettings: Codable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         masterEnabled = try values.decodeIfPresent(Bool.self, forKey: .masterEnabled) ?? true
         equalizerEnabled = try values.decodeIfPresent(Bool.self, forKey: .equalizerEnabled) ?? true
+        equalizerSources = try values.decodeIfPresent(Set<String>.self, forKey: .equalizerSources)
+        dynamicsSources = try values.decodeIfPresent(Set<String>.self, forKey: .dynamicsSources)
+        let decodedEqualizerScope = try values.decodeIfPresent(SourceScope.self, forKey: .equalizerScope) ??
+            (equalizerSources == nil ? .all : .only)
+        let decodedDynamicsScope = try values.decodeIfPresent(SourceScope.self, forKey: .dynamicsScope) ??
+            (dynamicsSources == nil ? .all : .only)
+        equalizerOnlySources = try values.decodeIfPresent(Set<String>.self, forKey: .equalizerOnlySources) ??
+            (decodedEqualizerScope == .only ? equalizerSources ?? [] : [])
+        equalizerExcludedSources = try values.decodeIfPresent(Set<String>.self, forKey: .equalizerExcludedSources) ??
+            (decodedEqualizerScope == .excluding ? equalizerSources ?? [] : [])
+        dynamicsOnlySources = try values.decodeIfPresent(Set<String>.self, forKey: .dynamicsOnlySources) ??
+            (decodedDynamicsScope == .only ? dynamicsSources ?? [] : [])
+        dynamicsExcludedSources = try values.decodeIfPresent(Set<String>.self, forKey: .dynamicsExcludedSources) ??
+            (decodedDynamicsScope == .excluding ? dynamicsSources ?? [] : [])
+        equalizerScope = decodedEqualizerScope
+        dynamicsScope = decodedDynamicsScope
         showMenuBar = try values.decodeIfPresent(Bool.self, forKey: .showMenuBar) ?? true
         selectedPreset = try values.decodeIfPresent(String.self, forKey: .selectedPreset) ?? "Flat"
         bands = try values.decodeIfPresent([Double].self, forKey: .bands) ?? Array(repeating: 0, count: 10)
@@ -141,6 +179,10 @@ struct HushSettings: Codable {
         customPresets = try values.decodeIfPresent([EQPreset].self, forKey: .customPresets) ?? []
         volumes = try values.decodeIfPresent([String: Double].self, forKey: .volumes) ?? [:]
         mutedApps = try values.decodeIfPresent(Set<String>.self, forKey: .mutedApps) ?? []
+        manualSources = try values.decodeIfPresent(Set<String>.self, forKey: .manualSources) ?? []
+        pinnedSources = try values.decodeIfPresent(Set<String>.self, forKey: .pinnedSources) ?? []
+        dismissedSources = try values.decodeIfPresent(Set<String>.self, forKey: .dismissedSources) ?? []
+        sourceNames = try values.decodeIfPresent([String: String].self, forKey: .sourceNames) ?? [:]
         shortcuts = try values.decodeIfPresent([String: KeyBinding].self, forKey: .shortcuts) ?? [:]
     }
 
@@ -148,6 +190,22 @@ struct HushSettings: Codable {
         DeviceProfile(selectedPreset: selectedPreset, bands: bands, preamp: preamp,
                       autoPreamp: autoPreamp,
                       balance: balance, outputTrim: outputTrim, dynamics: dynamics)
+    }
+
+    func equalizerSelection(for scope: SourceScope) -> Set<String>? {
+        switch scope {
+        case .all: nil
+        case .only: equalizerOnlySources
+        case .excluding: equalizerExcludedSources
+        }
+    }
+
+    func dynamicsSelection(for scope: SourceScope) -> Set<String>? {
+        switch scope {
+        case .all: nil
+        case .only: dynamicsOnlySources
+        case .excluding: dynamicsExcludedSources
+        }
     }
 
     mutating func activateOutput(_ uid: String) {

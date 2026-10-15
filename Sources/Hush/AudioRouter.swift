@@ -88,6 +88,9 @@ private final class AppRoute {
     let ring: OpaquePointer
     let source: AVAudioSourceNode
     let mixer = AVAudioMixerNode()
+    let equalizer = AudioRouter.makeEqualizer()
+    let compressor = AudioRouter.makeEffect(kAudioUnitSubType_DynamicsProcessor)
+    let limiter = AudioRouter.makeEffect(kAudioUnitSubType_PeakLimiter)
     var tap: AudioObjectID = 0
     var aggregate: AudioObjectID = 0
     var ioProc: AudioDeviceIOProcID?
@@ -96,6 +99,9 @@ private final class AppRoute {
         self.ids = ids
         guard let ring = AudioRingCreate(8192) else { throw HushAudioError("Could not allocate audio buffer") }
         self.ring = ring
+        equalizer.bypass = true
+        compressor.bypass = true
+        limiter.bypass = true
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate,
                                    channels: 2, interleaved: false)!
         source = AVAudioSourceNode(format: format) { _, _, frameCount, output in
@@ -119,9 +125,6 @@ struct HushAudioError: LocalizedError {
 
 final class AudioRouter {
     private let engine = AVAudioEngine()
-    private let equalizer = AudioRouter.makeEqualizer()
-    private let compressor = AudioRouter.makeEffect(kAudioUnitSubType_DynamicsProcessor)
-    private let limiter = AudioRouter.makeEffect(kAudioUnitSubType_PeakLimiter)
     private var routes: [String: AppRoute] = [:]
     private var lastSeen: [String: TimeInterval] = [:]
     // Keep disconnected app nodes alive until the engine stops: removing a mixer from a
@@ -139,16 +142,8 @@ final class AudioRouter {
     private var lastRouteSetupMs = 0.0
 
     init() {
-        engine.attach(equalizer)
-        engine.attach(compressor)
-        engine.attach(limiter)
         engine.disconnectNodeOutput(engine.mainMixerNode)
-        engine.connect(engine.mainMixerNode, to: equalizer, format: nil)
-        engine.connect(equalizer, to: compressor, format: nil)
-        engine.connect(compressor, to: limiter, format: nil)
-        engine.connect(limiter, to: engine.outputNode, format: nil)
-        compressor.bypass = true
-        limiter.bypass = true
+        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: nil)
     }
 
     func startMonitoring(on queue: DispatchQueue, changed: @escaping () -> Void) {
@@ -272,10 +267,12 @@ final class AudioRouter {
         result.sampleRate = outputRate
         result.routeStarts = routeStarts
         result.lastRouteSetupMs = lastRouteSetupMs
-        result.effectLatencyMs = (equalizer.latency + (compressor.bypass ? 0 : compressor.latency) +
-                                  (limiter.bypass ? 0 : limiter.latency)) * 1_000
+        if let route = routes.values.first {
+            result.effectLatencyMs = (route.equalizer.latency + (route.compressor.bypass ? 0 : route.compressor.latency) +
+                                      (route.limiter.bypass ? 0 : route.limiter.latency)) * 1_000
+        }
         result.outputLatencyMs = engine.outputNode.presentationLatency * 1_000
-        if !compressor.bypass {
+        if let compressor = routes.values.first?.compressor, !compressor.bypass {
             let reduction = Double(compressor.auAudioUnit.parameterTree?
                 .parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_CompressionAmount))?.value ?? 0)
             result.gainReductionDb = reduction > 0.05 ? reduction : 0
@@ -311,6 +308,18 @@ final class AudioRouter {
             return AudioApp(id: id, name: name, icon: app?.icon,
                             processIDs: processes.map(\.2).sorted())
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func allApplications() -> [AudioApp] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+            .compactMap { app in
+                guard let id = app.bundleIdentifier else { return nil }
+                return AudioApp(id: id, name: app.localizedName ?? id, icon: app.icon, processIDs: [])
+            }
+            .reduce(into: [String: AudioApp]()) { result, app in result[app.id] = app }
+            .values
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     private func monitorProcessOutput(_ processObjects: [AudioObjectID]) {
@@ -357,7 +366,6 @@ final class AudioRouter {
             outputRate = rate
             for app in apps { lastSeen[app.id] = now }
         }
-        apply(settings)
         let wanted = Dictionary(uniqueKeysWithValues: apps.map { ($0.id, $0) })
         for (id, route) in routes {
             if let app = wanted[id] {
@@ -366,6 +374,7 @@ final class AudioRouter {
         }
         do {
             for app in apps where routes[app.id] == nil { try add(app, settings: settings) }
+            apply(settings)
         } catch {
             if routes.isEmpty { stop() }
             throw error
@@ -374,28 +383,40 @@ final class AudioRouter {
     }
 
     func apply(_ settings: HushSettings) {
-        equalizer.bypass = !settings.equalizerEnabled
         let peakBoost = settings.bands.max() ?? 0
         let preamp = settings.autoPreamp ? min(0, -peakBoost) : settings.preamp
-        equalizer.globalGain = Float(preamp)
-        engine.mainMixerNode.outputVolume = Float(settings.outputTrim)
-        // Pan each app's stereo bus. The main mixer can preserve channel balance
-        // when its output is negotiated as mono, so it is not the source of truth.
-        for (band, gain) in zip(equalizer.bands, settings.bands) { band.gain = Float(gain) }
         let dynamics = settings.dynamics
-        setParameter(compressor, kDynamicsProcessorParam_Threshold, dynamics.threshold)
-        setParameter(compressor, kDynamicsProcessorParam_HeadRoom, dynamics.headroom)
-        setParameter(compressor, kDynamicsProcessorParam_AttackTime, dynamics.attack)
-        setParameter(compressor, kDynamicsProcessorParam_ReleaseTime, dynamics.release)
-        setParameter(compressor, kDynamicsProcessorParam_OverallGain, dynamics.makeup)
-        compressor.bypass = !dynamics.compressorEnabled
-        setParameter(limiter, kLimiterParam_PreGain, dynamics.limiterDrive)
-        setParameter(limiter, kLimiterParam_AttackTime, dynamics.limiterAttack)
-        setParameter(limiter, kLimiterParam_DecayTime, dynamics.limiterRelease)
-        limiter.bypass = !dynamics.limiterEnabled
+        engine.mainMixerNode.outputVolume = Float(settings.outputTrim)
+        for (id, route) in routes {
+            route.equalizer.bypass = !settings.equalizerEnabled || !isIncluded(id, scope: settings.equalizerScope,
+                                                                                sources: settings.equalizerSources)
+            route.equalizer.globalGain = Float(preamp)
+            for (band, gain) in zip(route.equalizer.bands, settings.bands) { band.gain = Float(gain) }
+            let effectsEnabled = isIncluded(id, scope: settings.dynamicsScope, sources: settings.dynamicsSources)
+            setParameter(route.compressor, kDynamicsProcessorParam_Threshold, dynamics.threshold)
+            setParameter(route.compressor, kDynamicsProcessorParam_HeadRoom, dynamics.headroom)
+            setParameter(route.compressor, kDynamicsProcessorParam_AttackTime, dynamics.attack)
+            setParameter(route.compressor, kDynamicsProcessorParam_ReleaseTime, dynamics.release)
+            setParameter(route.compressor, kDynamicsProcessorParam_OverallGain, dynamics.makeup)
+            route.compressor.bypass = !dynamics.compressorEnabled || !effectsEnabled
+            setParameter(route.limiter, kLimiterParam_PreGain, dynamics.limiterDrive)
+            setParameter(route.limiter, kLimiterParam_AttackTime, dynamics.limiterAttack)
+            setParameter(route.limiter, kLimiterParam_DecayTime, dynamics.limiterRelease)
+            route.limiter.bypass = !dynamics.limiterEnabled || !effectsEnabled
+        }
+
+        // Pan each app's stereo bus after its source-specific processing.
         for (id, route) in routes {
             route.mixer.outputVolume = settings.mutedApps.contains(id) ? 0 : Float(settings.volumes[id] ?? 1)
             route.mixer.pan = Float(settings.balance)
+        }
+    }
+
+    private func isIncluded(_ id: String, scope: SourceScope, sources: Set<String>?) -> Bool {
+        switch scope {
+        case .all: true
+        case .only: sources?.contains(id) == true
+        case .excluding: !(sources?.contains(id) == true)
         }
     }
 
@@ -406,6 +427,9 @@ final class AudioRouter {
         for route in retired {
             engine.detach(route.source)
             engine.detach(route.mixer)
+            engine.detach(route.equalizer)
+            engine.detach(route.compressor)
+            engine.detach(route.limiter)
         }
         retired.removeAll()
         lastSeen.removeAll()
@@ -477,8 +501,15 @@ final class AudioRouter {
                 guard alive else { throw HushAudioError("Audio device for \(app.name) did not start") }
                 engine.attach(route.source)
                 engine.attach(route.mixer)
-                engine.connect(route.source, to: route.mixer, format: route.source.outputFormat(forBus: 0))
-                engine.connect(route.mixer, to: engine.mainMixerNode, format: nil)
+                engine.attach(route.equalizer)
+                engine.attach(route.compressor)
+                engine.attach(route.limiter)
+                let format = route.source.outputFormat(forBus: 0)
+                engine.connect(route.source, to: route.mixer, format: format)
+                engine.connect(route.mixer, to: route.equalizer, format: format)
+                engine.connect(route.equalizer, to: route.compressor, format: format)
+                engine.connect(route.compressor, to: route.limiter, format: format)
+                engine.connect(route.limiter, to: engine.mainMixerNode, format: format)
                 route.mixer.outputVolume = settings.mutedApps.contains(app.id) ? 0 : Float(settings.volumes[app.id] ?? 1)
                 route.mixer.pan = Float(settings.balance)
                 // Keep the app's native path audible until our output graph can render it.
@@ -522,6 +553,9 @@ final class AudioRouter {
                 if route.aggregate != 0 { AudioHardwareDestroyAggregateDevice(route.aggregate) }
                 if route.source.engine != nil { engine.detach(route.source) }
                 if route.mixer.engine != nil { engine.detach(route.mixer) }
+                if route.equalizer.engine != nil { engine.detach(route.equalizer) }
+                if route.compressor.engine != nil { engine.detach(route.compressor) }
+                if route.limiter.engine != nil { engine.detach(route.limiter) }
                 throw error
             }
         } catch {
@@ -545,6 +579,9 @@ final class AudioRouter {
         } else {
             engine.detach(route.source)
             engine.detach(route.mixer)
+            engine.detach(route.equalizer)
+            engine.detach(route.compressor)
+            engine.detach(route.limiter)
         }
     }
 }

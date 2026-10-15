@@ -55,12 +55,15 @@ void AudioRingRead(AudioRing *ring, float *left, float *right, uint32_t frames) 
     uint64_t read = atomic_load_explicit(&ring->read, memory_order_relaxed);
     uint64_t written = atomic_load_explicit(&ring->written, memory_order_acquire);
     uint32_t available = (uint32_t)(written - read);
-    // The tap and output device have independent clocks. Keep at most one render
-    // buffer queued when they drift, instead of letting latency grow to the ring size.
-    if (available > (uint64_t)frames * 2) {
-        atomic_fetch_add_explicit(&ring->skippedFrames, available - frames, memory_order_relaxed);
-        read = written - frames;
-        available = frames;
+    // The tap and output device have independent clocks. Keep two render
+    // buffers queued and tolerate an additional buffer of timing slack. When
+    // correction is needed, discard only the excess rather than the whole
+    // backlog so clock correction cannot create a large discontinuity.
+    if (available > (uint64_t)frames * 3) {
+        uint32_t target = frames * 2;
+        atomic_fetch_add_explicit(&ring->skippedFrames, available - target, memory_order_relaxed);
+        read = written - target;
+        available = target;
     }
     uint32_t count = frames < available ? frames : available;
     int hasSignal = 0;

@@ -8,6 +8,7 @@ final class DiagnosticsStore: ObservableObject {
 final class HushModel: ObservableObject {
     @Published private(set) var settings = HushSettings.load()
     @Published private(set) var apps: [AudioApp] = []
+    @Published private(set) var sourceApps: [AudioApp] = []
     @Published private(set) var outputDevices: [OutputDevice] = []
     let diagnostics = DiagnosticsStore()
     @Published var audioError: String?
@@ -17,6 +18,27 @@ final class HushModel: ObservableObject {
     private let audioQueue = DispatchQueue(label: "com.hushapp.audio")
     private var audioBusy = false
     private var timer: Timer?
+    private var hiddenActiveSources: Set<String> = []
+
+    var mixerApps: [AudioApp] {
+        let active = Dictionary(uniqueKeysWithValues: apps.map { ($0.id, $0) })
+        let available = Dictionary(uniqueKeysWithValues: sourceApps.map { ($0.id, $0) })
+        let stored = settings.manualSources.union(settings.pinnedSources)
+        return Set(active.keys).union(stored).subtracting(hiddenActiveSources).compactMap { id in
+            active[id] ?? available[id] ??
+                AudioApp(id: id, name: settings.sourceNames[id] ?? id, icon: nil, processIDs: [])
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    var addableSourceApps: [AudioApp] {
+        let knownIDs = Set(sourceApps.map(\.id))
+        let stored = settings.manualSources.union(settings.pinnedSources)
+            .subtracting(knownIDs)
+            .map { AudioApp(id: $0, name: settings.sourceNames[$0] ?? $0, icon: nil, processIDs: []) }
+        return (sourceApps + stored).sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
 
     init() {
         hotkeys.onPress = { [weak self] id in self?.toggleShortcut(id) }
@@ -50,6 +72,10 @@ final class HushModel: ObservableObject {
             settings.save()
         }
         let discovered = audio.discover()
+        let allApplications = audio.allApplications()
+        if !sourceApps.elementsEqual(allApplications, by: {
+            $0.id == $1.id && $0.name == $1.name
+        }) { sourceApps = allApplications }
         audioBusy = true
         let settings = settings
         audioQueue.async { [weak self] in
@@ -58,6 +84,8 @@ final class HushModel: ObservableObject {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let snapshot):
+                    let activeIDs = Set(snapshot.0.map(\.id))
+                    self.hiddenActiveSources = self.hiddenActiveSources.intersection(activeIDs)
                     if !self.apps.elementsEqual(snapshot.0, by: {
                         $0.id == $1.id && $0.name == $1.name && $0.processIDs == $1.processIDs
                     }) { self.apps = snapshot.0 }
@@ -89,6 +117,31 @@ final class HushModel: ObservableObject {
 
     func toggleMute(_ id: String) {
         change { if !$0.mutedApps.insert(id).inserted { $0.mutedApps.remove(id) } }
+    }
+
+    func addSource(_ app: AudioApp) {
+        change {
+            $0.manualSources.insert(app.id)
+            $0.pinnedSources.insert(app.id)
+            $0.sourceNames[app.id] = app.name
+        }
+        hiddenActiveSources.remove(app.id)
+    }
+
+    func removeSource(_ id: String) {
+        change {
+            $0.manualSources.remove(id)
+            $0.pinnedSources.remove(id)
+        }
+        hiddenActiveSources.insert(id)
+    }
+
+    func togglePin(_ id: String) {
+        change { settings in
+            if !settings.pinnedSources.insert(id).inserted {
+                settings.pinnedSources.remove(id)
+            }
+        }
     }
 
     func selectOutput(_ uid: String) {
@@ -135,6 +188,42 @@ final class HushModel: ObservableObject {
 
     func setAutoPreamp(_ enabled: Bool) {
         change { $0.autoPreamp = enabled }
+    }
+
+    func setEqualizerSources(_ sources: Set<String>?) {
+        change {
+            switch $0.equalizerScope {
+            case .all: break
+            case .only: $0.equalizerOnlySources = sources ?? []
+            case .excluding: $0.equalizerExcludedSources = sources ?? []
+            }
+            $0.equalizerSources = sources
+        }
+    }
+
+    func setDynamicsSources(_ sources: Set<String>?) {
+        change {
+            switch $0.dynamicsScope {
+            case .all: break
+            case .only: $0.dynamicsOnlySources = sources ?? []
+            case .excluding: $0.dynamicsExcludedSources = sources ?? []
+            }
+            $0.dynamicsSources = sources
+        }
+    }
+
+    func setEqualizerScope(_ scope: SourceScope) {
+        change {
+            $0.equalizerScope = scope
+            $0.equalizerSources = $0.equalizerSelection(for: scope)
+        }
+    }
+
+    func setDynamicsScope(_ scope: SourceScope) {
+        change {
+            $0.dynamicsScope = scope
+            $0.dynamicsSources = $0.dynamicsSelection(for: scope)
+        }
     }
 
     func registerBandUndo(_ index: Int, value: Double, preset: String, undoManager: UndoManager?) {
