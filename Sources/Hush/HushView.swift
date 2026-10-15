@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private let panel = Color.white.opacity(0.42)
+private let panel = Color.black.opacity(0.045)
 
 private struct AudioKnob: View {
     let title: String
@@ -488,8 +488,8 @@ struct QuickPanel: View {
     let quit: () -> Void
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("Hush controls").font(.title2.bold())
                     Spacer()
@@ -503,11 +503,11 @@ struct QuickPanel: View {
                                              set: { value in model.change { $0.masterEnabled = value } }))
                         .labelsHidden()
                 }
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     OutputPicker(model: model)
                     SystemVolume(model: model)
                 }
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Applications").font(.headline)
                         Spacer()
@@ -521,9 +521,9 @@ struct QuickPanel: View {
                         ForEach(model.mixerApps) { app in AppSlider(model: model, app: app) }
                     }
                 }
-                .padding(12).background(panel, in: RoundedRectangle(cornerRadius: 12))
+                .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                 SourceOutputPanel(model: model, compact: true)
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text("Equalizer").font(.headline)
                         Spacer()
@@ -533,7 +533,7 @@ struct QuickPanel: View {
                     }
                     PresetPicker(model: model)
                 }
-                .padding(12).background(panel, in: RoundedRectangle(cornerRadius: 12))
+                .padding(10).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                 if let error = model.audioError {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange).font(.caption)
@@ -545,10 +545,9 @@ struct QuickPanel: View {
                     Button("Quit", action: quit)
                 }
             }
-            .padding(18)
+            .padding(16)
         }
-        .frame(width: 400, height: 510)
-        .background(.ultraThinMaterial)
+        .frame(width: 400, height: 620)
         .tint(.blue)
     }
 }

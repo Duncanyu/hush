@@ -178,18 +178,12 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSPopover()
         panel.behavior = .transient
-        panel.appearance = NSAppearance(named: .aqua)
-        panel.contentSize = NSSize(width: 400, height: 510)
-        let hosting = NSHostingController(rootView: QuickPanel(model: model,
+        panel.contentSize = NSSize(width: 400, height: 620)
+        panel.contentViewController = NSHostingController(rootView: QuickPanel(model: model,
             openSettings: { [weak self] in self?.popover?.close(); self?.showSettings() },
             quit: { NSApp.terminate(nil) }))
-        hosting.view.wantsLayer = true
-        hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
-        panel.contentViewController = hosting
         panel.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover = panel
-        panel.contentViewController?.view.window?.isOpaque = false
-        panel.contentViewController?.view.window?.backgroundColor = .clear
         panel.contentViewController?.view.window?.makeKey()
     }
 
