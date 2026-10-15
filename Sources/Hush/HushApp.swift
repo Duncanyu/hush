@@ -48,7 +48,7 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
     private var lastRenderedVisualizer = false
     private var hasRenderedIcon = false
     private let bundledIconSVG = """
-    <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"><rect x="15" y="15" width="98" height="98" rx="28"/><path d="M30 70 C40 70 40 48 50 48 S60 83 72 83 S85 58 98 58"/></g></svg>
+    <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="currentColor" stroke-width="10.5" stroke-linecap="round" stroke-linejoin="round"><rect x="15" y="15" width="98" height="98" rx="28"/><path d="M30 70 C40 70 40 48 50 48 S60 83 72 83 S85 58 98 58"/></g></svg>
     """
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -178,12 +178,18 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSPopover()
         panel.behavior = .transient
+        panel.appearance = NSAppearance(named: .aqua)
         panel.contentSize = NSSize(width: 400, height: 510)
-        panel.contentViewController = NSHostingController(rootView: QuickPanel(model: model,
+        let hosting = NSHostingController(rootView: QuickPanel(model: model,
             openSettings: { [weak self] in self?.popover?.close(); self?.showSettings() },
             quit: { NSApp.terminate(nil) }))
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentViewController = hosting
         panel.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover = panel
+        panel.contentViewController?.view.window?.isOpaque = false
+        panel.contentViewController?.view.window?.backgroundColor = .clear
         panel.contentViewController?.view.window?.makeKey()
     }
 

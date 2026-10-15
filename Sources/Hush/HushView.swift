@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private let panel = Color.primary.opacity(0.055)
+private let panel = Color.white.opacity(0.42)
 
 private struct AudioKnob: View {
     let title: String
@@ -548,7 +548,7 @@ struct QuickPanel: View {
             .padding(18)
         }
         .frame(width: 400, height: 510)
-        .background(.regularMaterial)
+        .background(.ultraThinMaterial)
         .tint(.blue)
     }
 }

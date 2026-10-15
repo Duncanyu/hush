@@ -4,7 +4,7 @@
 captures exposed application audio, mixes it back to the selected output, and
 applies optional per-source volume, mute, EQ, compression, and limiting.
 
-**[Download Hush 0.2.1](https://github.com/Duncanyu/hush/releases/tag/v0.2.1)** ·
+**[Download Hush 0.2.2](https://github.com/Duncanyu/hush/releases/tag/v0.2.2)** ·
 [Install](#download-and-install) · [Use](#use) ·
 [Performance and latency](#performance-and-latency)
 
@@ -12,8 +12,8 @@ Hush requires an Apple Silicon Mac running macOS 14.2 or later.
 
 ## Download and install
 
-Download **Hush-v0.2.1-macos-arm64.zip** from the
-[0.2.1 release](https://github.com/Duncanyu/hush/releases/tag/v0.2.1).
+Download **Hush-v0.2.2-macos-arm64.zip** from the
+[0.2.2 release](https://github.com/Duncanyu/hush/releases/tag/v0.2.2).
 
 1. Unzip the download and drag **Hush.app** into **Applications**.
 2. Open Hush. This build is ad hoc signed and is **not notarized**. If macOS
@@ -30,7 +30,7 @@ Download **Hush-v0.2.1-macos-arm64.zip** from the
 The release includes a SHA-256 checksum file. Place it beside the ZIP and run:
 
 ```sh
-shasum -a 256 -c Hush-v0.2.1-macos-arm64.zip.sha256
+shasum -a 256 -c Hush-v0.2.2-macos-arm64.zip.sha256
 ```
 
 ## Use
@@ -40,6 +40,7 @@ shasum -a 256 -c Hush-v0.2.1-macos-arm64.zip.sha256
   opened.
 - The menu-bar waveform follows the macOS appearance and changes into a
   low-cost live visualizer when enabled.
+- The Hush icon is now a monochrome waveform that follows the macOS appearance.
 - Choose **Full settings** for the dashboard, advanced mixer, 10-band EQ,
   dynamics, output controls, shortcuts, and general settings.
 - Active applications are discovered automatically. Use **Add audio source**
@@ -135,3 +136,10 @@ it to `dist/Hush.app`. It does not produce a notarized distribution.
 Hush uses Apple's Core Audio, AVAudioEngine, AudioToolbox, and AppKit/SwiftUI.
 Audio capture permissions and the streams available for processing are
 controlled by macOS.
+
+## Changelog
+
+### 0.2.2
+
+- Changed the application and menu-bar icon to the supplied monochrome waveform.
+- Restored the popup to a translucent native macOS material surface.
