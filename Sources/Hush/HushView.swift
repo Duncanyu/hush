@@ -612,8 +612,9 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Source routing", systemImage: "arrow.triangle.branch")
                         .font(.headline)
-                    SourceOutputPanel(model: model, compact: false, showHeader: false)
+                    SourceOutputPanel(model: model, compact: false, card: false, showHeader: false)
                 }
+                .padding(18).background(panel, in: RoundedRectangle(cornerRadius: 16))
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Label("Sound profile", systemImage: "waveform.path").font(.headline)

@@ -148,7 +148,8 @@ controlled by macOS.
 
 - Matched source routing typography and spacing to the surrounding dashboard
   cards and quick-menu controls.
-- Added a source-routing icon to the Dashboard section header.
+- Added a source-routing icon inside the Dashboard card header to match the
+  other Dashboard sections.
 - Kept Advanced source routing as a standalone editor section with the same
   heading hierarchy as the mixer and equalizer.
 - Restored the colorful Hush application icon while keeping the menu-bar
