@@ -547,7 +547,7 @@ struct QuickPanel: View {
             }
             .padding(16)
         }
-        .frame(width: 400, height: 620)
+        .frame(width: 400, height: 520)
         .tint(.blue)
     }
 }

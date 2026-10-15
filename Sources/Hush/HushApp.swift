@@ -178,7 +178,7 @@ private final class HushDelegate: NSObject, NSApplicationDelegate, NSPopoverDele
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSPopover()
         panel.behavior = .transient
-        panel.contentSize = NSSize(width: 400, height: 620)
+        panel.contentSize = NSSize(width: 400, height: 520)
         panel.contentViewController = NSHostingController(rootView: QuickPanel(model: model,
             openSettings: { [weak self] in self?.popover?.close(); self?.showSettings() },
             quit: { NSApp.terminate(nil) }))
