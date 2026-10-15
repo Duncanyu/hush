@@ -324,13 +324,30 @@ private struct OutputPicker: View {
 private struct SourceOutputPanel: View {
     @ObservedObject var model: HushModel
     let compact: Bool
+    let card: Bool
+    let showHeader: Bool
+
+    init(model: HushModel, compact: Bool, card: Bool = true, showHeader: Bool = true) {
+        self.model = model
+        self.compact = compact
+        self.card = card
+        self.showHeader = showHeader
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 6 : 10) {
-            HStack {
-                Text("Source routing").font(compact ? .subheadline.weight(.semibold) : .title2.bold())
-                Spacer()
-                if !compact { Text("Choose one output for each source").foregroundStyle(.secondary) }
+        VStack(alignment: .leading, spacing: compact ? 6 : (card ? 12 : 10)) {
+            if showHeader {
+                HStack {
+                    VStack(alignment: .leading, spacing: compact ? 0 : 3) {
+                        Text("Source routing")
+                            .font(compact || card ? .headline : .title2.bold())
+                        if !compact && !card {
+                            Text("Choose one output for each source")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if !compact { Spacer() }
+                }
             }
             if model.mixerApps.isEmpty {
                 Text("Add or play an audio source to route it.")
@@ -357,8 +374,10 @@ private struct SourceOutputPanel: View {
                 }
             }
         }
-        .padding(compact ? 10 : 16)
-        .background(panel, in: RoundedRectangle(cornerRadius: compact ? 10 : 14))
+        .padding(card ? (compact ? 10 : 18) : 0)
+        .background(card ? (compact ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(panel)) :
+                        AnyShapeStyle(Color.clear),
+                    in: RoundedRectangle(cornerRadius: compact ? 12 : 16))
     }
 }
 
@@ -590,7 +609,11 @@ struct SettingsView: View {
                     SystemVolume(model: model)
                 }
                 .padding(18).background(panel, in: RoundedRectangle(cornerRadius: 16))
-                SourceOutputPanel(model: model, compact: false)
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Source routing", systemImage: "arrow.triangle.branch")
+                        .font(.headline)
+                    SourceOutputPanel(model: model, compact: false, showHeader: false)
+                }
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Label("Sound profile", systemImage: "waveform.path").font(.headline)
@@ -622,7 +645,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 outputControls
                 mixer
-                SourceOutputPanel(model: model, compact: false)
+                SourceOutputPanel(model: model, compact: false, card: false)
                 equalizer
                 dynamics
             }

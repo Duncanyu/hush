@@ -8,8 +8,8 @@
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>Hush</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.2.2</string>
-    <key>CFBundleVersion</key><string>7</string>
+    <key>CFBundleShortVersionString</key><string>0.2.3</string>
+    <key>CFBundleVersion</key><string>10</string>
     <key>LSMinimumSystemVersion</key><string>14.2</string>
     <key>LSUIElement</key><true/>
     <key>NSAudioCaptureUsageDescription</key><string>Hush captures app audio to adjust its volume and apply your equalizer.</string>
