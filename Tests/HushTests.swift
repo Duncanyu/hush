@@ -1,6 +1,8 @@
 import XCTest
 import AVFoundation
 import AudioRing
+import AudioToolbox
+import Darwin
 @testable import Hush
 
 final class HushTests: XCTestCase {
@@ -36,7 +38,9 @@ final class HushTests: XCTestCase {
             right.withUnsafeMutableBufferPointer { r in AudioRingRead(ring, l.baseAddress, r.baseAddress, 2) }
         }
         XCTAssertEqual(left, [5, 6])
-        XCTAssertEqual(AudioRingGetStats(ring).skippedFrames, 4)
+        let firstStats = AudioRingGetStats(ring)
+        XCTAssertEqual(firstStats.skippedFrames, 4)
+        XCTAssertEqual(firstStats.peakQueuedFrames, 8)
         let next: [Float] = [9, 10]
         next.withUnsafeBufferPointer { AudioRingWrite(ring, $0.baseAddress, nil, 2, 0) }
         left.withUnsafeMutableBufferPointer { l in
@@ -44,6 +48,70 @@ final class HushTests: XCTestCase {
         }
         XCTAssertEqual(left, [7, 8])
         XCTAssertEqual(AudioRingGetStats(ring).queuedFrames, 2)
+    }
+
+    func testPlanarVisualizerReadsOnlyChannelFrames() {
+        let ring = AudioRingCreate(1024)!
+        defer { AudioRingDestroy(ring) }
+        AudioRingSetAnalysisEnabled(ring, 1)
+        let left = (0..<512).map { $0.isMultiple(of: 2) ? Float(0) : Float(0.5) }
+        let right = [Float](repeating: 0.25, count: 512)
+        left.withUnsafeBufferPointer { l in
+            right.withUnsafeBufferPointer { r in AudioRingWrite(ring, l.baseAddress, r.baseAddress, 512, 0) }
+        }
+        XCTAssertEqual(AudioRingGetStats(ring).peakLevel, 0.5)
+        var outputLeft = [Float](repeating: 0, count: 512)
+        var outputRight = outputLeft
+        outputLeft.withUnsafeMutableBufferPointer { l in
+            outputRight.withUnsafeMutableBufferPointer { r in AudioRingRead(ring, l.baseAddress, r.baseAddress, 512) }
+        }
+        XCTAssertEqual(outputLeft, left)
+        XCTAssertEqual(outputRight, right)
+    }
+
+    func testRingTracksCaptureAgeAfterBacklogTrim() {
+        let ring = AudioRingCreate(1024)!
+        defer { AudioRingDestroy(ring) }
+        AudioRingSetSampleRate(ring, 48_000)
+        AudioRingSetTimingEnabled(ring, 1)
+        let source = [Float](repeating: 0.25, count: 1024)
+        let inputTime = mach_absolute_time()
+        source.withUnsafeBufferPointer {
+            AudioRingWriteTimed(ring, $0.baseAddress, nil, 1024, 0, inputTime)
+        }
+        var left = [Float](repeating: 0, count: 256)
+        var right = left
+        let renderTime = mach_absolute_time() + AudioConvertNanosToHostTime(120_000_000)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                AudioRingReadTimed(ring, l.baseAddress, r.baseAddress, 256, renderTime)
+            }
+        }
+        let stats = AudioRingGetStats(ring)
+        XCTAssertEqual(stats.skippedFrames, 512)
+        XCTAssertTrue((100_000...120_000).contains(stats.tapToSourceRenderUs))
+        XCTAssertEqual(left, Array(repeating: 0.25, count: 256))
+        AudioRingSetTimingEnabled(ring, 0)
+        XCTAssertEqual(AudioRingGetStats(ring).tapToSourceRenderUs, 0)
+    }
+
+    func testRingDoesNotReportTimingWithoutCaptureTimestamp() {
+        let ring = AudioRingCreate(256)!
+        defer { AudioRingDestroy(ring) }
+        AudioRingSetSampleRate(ring, 48_000)
+        AudioRingSetTimingEnabled(ring, 1)
+        let source = [Float](repeating: 0.25, count: 64)
+        source.withUnsafeBufferPointer { AudioRingWriteTimed(ring, $0.baseAddress, nil, 64, 0, 0) }
+        var left = [Float](repeating: 0, count: 64)
+        var right = left
+        let renderTime = mach_absolute_time() + AudioConvertNanosToHostTime(20_000_000)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                AudioRingReadTimed(ring, l.baseAddress, r.baseAddress, 64, renderTime)
+            }
+        }
+        let stats = AudioRingGetStats(ring)
+        XCTAssertEqual(stats.tapToSourceRenderUs, 0)
     }
 
     func testEqualizerRangeAndResponse() throws {

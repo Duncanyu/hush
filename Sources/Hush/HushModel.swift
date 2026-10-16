@@ -95,7 +95,7 @@ final class HushModel: ObservableObject {
                     if !self.apps.elementsEqual(snapshot.0, by: {
                         $0.id == $1.id && $0.name == $1.name && $0.processIDs == $1.processIDs
                     }) { self.apps = snapshot.0 }
-                    self.diagnostics.value = snapshot.1
+                    if self.diagnostics.value != snapshot.1 { self.diagnostics.value = snapshot.1 }
                     if self.audioError != nil { self.audioError = nil }
                 case .failure(let error):
                     if self.audioError != error.localizedDescription { self.audioError = error.localizedDescription }
@@ -110,8 +110,14 @@ final class HushModel: ObservableObject {
         audioQueue.async { [weak self] in
             guard let self else { return }
             let value = self.audio.diagnostics()
-            DispatchQueue.main.async { self.diagnostics.value = value }
+            DispatchQueue.main.async {
+                if self.diagnostics.value != value { self.diagnostics.value = value }
+            }
         }
+    }
+
+    func setTimingDiagnosticsEnabled(_ enabled: Bool) {
+        audioQueue.async { [weak self] in self?.audio.setTimingDiagnosticsEnabled(enabled) }
     }
 
     func change(_ edit: (inout HushSettings) -> Void) {

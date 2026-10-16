@@ -1,124 +1,88 @@
 # Hush
 
-**A low-latency per-app mixer and system-wide equalizer for macOS.** Hush
-captures exposed application audio, mixes it back to the selected output, and
-applies optional per-source volume, mute, EQ, compression, and limiting.
+Hush is a per-app audio mixer and equalizer for Apple Silicon Macs. It captures
+audio that macOS exposes through Core Audio taps, then routes it through per-app
+volume and mute controls, a 10-band EQ, optional dynamics, and the selected
+output device.
 
-**[Download Hush 0.3.0](https://github.com/Duncanyu/hush/releases/tag/v0.3.0)** ·
-[Install](#download-and-install) · [Use](#use) ·
-[Performance and latency](#performance-and-latency)
+**[Download Hush 0.3.1](https://github.com/Duncanyu/hush/releases/tag/v0.3.1)** ·
+[Install](#install) · [Use](#use) · [Latency and diagnostics](#latency-and-diagnostics) ·
+[Build](#build-from-source)
 
-Hush requires an Apple Silicon Mac running macOS 14.2 or later.
+Requires macOS 14.2 or later on Apple Silicon.
 
-## Download and install
+## Install
 
-Download **Hush-v0.3.0-macos-arm64.zip** from the
-[0.3.0 release](https://github.com/Duncanyu/hush/releases/tag/v0.3.0).
+1. Download `Hush-v0.3.1-macos-arm64.zip` from the
+   [0.3.1 release](https://github.com/Duncanyu/hush/releases/tag/v0.3.1).
+2. Unzip it and move `Hush.app` to Applications.
+3. Open Hush and grant **System Audio Recording** when macOS prompts you. If you
+   change this permission later, quit and reopen Hush.
 
-1. Unzip the download and drag **Hush.app** into **Applications**.
-2. Open Hush. This build is ad hoc signed and is **not notarized**. If macOS
-   blocks the app, open **System Settings → Privacy & Security → Security →
-   Open Anyway**, confirm, and launch Hush again. See
-   [Apple's instructions](https://support.apple.com/en-us/102445). Only bypass
-   this warning for a copy downloaded from this repository.
-3. Allow **System Audio Recording** when macOS asks. Hush does not install a
-   driver. If you change this permission in System Settings, quit and reopen
-   Hush.
-4. Hush appears in the menu bar. Click the waveform icon for quick controls,
-   or choose **Full settings** for the complete mixer and processing controls.
+The release is ad hoc signed and **not notarized**. If macOS blocks it, use
+**System Settings → Privacy & Security → Open Anyway** for the copy downloaded
+from this repository. See [Apple's instructions](https://support.apple.com/en-us/102445).
 
-The release includes a SHA-256 checksum file. Place it beside the ZIP and run:
+The release also includes a checksum file. Verify both downloads from the same
+release before installing:
 
 ```sh
-shasum -a 256 -c Hush-v0.3.0-macos-arm64.zip.sha256
+shasum -a 256 -c Hush-v0.3.1-macos-arm64.zip.sha256
 ```
 
 ## Use
 
-- Click the menu-bar waveform for system volume, output selection, app levels,
-  mute, EQ presets, and processing status. The popup is keyboard-focused when
-  opened.
-- The menu-bar waveform follows the macOS appearance and changes into a
-  low-cost live visualizer when enabled.
-- The Hush app icon is colorful; the menu-bar waveform follows the macOS appearance.
-- Choose **Full settings** for the dashboard, advanced mixer, 10-band EQ,
-  dynamics, output controls, shortcuts, and general settings.
-- Active applications are discovered automatically. Use **Add audio source**
-  to add an application before it plays audio; manually added sources stay in
-  the mixer and are pinned automatically.
-- Pin an automatically discovered application to keep it in the mixer after
-  it stops playing. Pinned applications also remain available in the Add audio
-  source menu, including when they are not currently running.
-- Remove a source from the mixer without permanently blacklisting it. If it
-  plays audio again later, Hush can discover it again.
-- Adjust each source's volume or mute state independently. Double-click a
-  processing dial to reset it. Command-Z undoes EQ edits.
-- Select **All**, **Only**, or **Excluding** for EQ and dynamics sources.
-  Only and Excluding keep separate application selections.
-- EQ presets, custom presets, dynamics settings, source selections, mixer
-  sources, and output profiles are saved independently for each output device.
-- Hush can switch the default output and control hardware volume when the
-  device supports it. The macOS Control Center volume slider remains Apple's
-  UI and reflects the same device volume.
-- Hush supports ⌘W to close the settings window and ⌘A through the standard
-  macOS responder chain.
-- Turning Hush off suspends audio processing, listeners, refresh timers, and
-  visualizer diagnostics. Only the shortcut and settings UI remain active.
+Hush lives in the menu bar. Click its waveform icon for quick output, app
+volume, mute, and EQ controls. Choose **Full settings** for source routing,
+the advanced mixer, EQ, dynamics, shortcuts, and general settings.
 
-Hush keeps the low-cost audio render graph warm while processing is enabled,
-including during idle periods, so a newly active app does not wait for the
-shared engine to start. Core Audio event listeners detect process output
-quickly, with a low-frequency refresh as a fallback. Routes are retained while
-their processes remain alive and are removed when those processes exit or the
-output device changes.
+- Playing apps appear automatically. **Add audio source** can prepare an app
+  before it plays; pin an app to keep it in the mixer after playback stops.
+- Set each source's output in **Source routing**. An unassigned source follows
+  the system default output.
+- Adjust EQ globally or limit it to selected sources. The compressor and peak
+  limiter are optional and off by default. EQ presets and output profiles are
+  saved per output device.
+- Double-click a processing dial to reset it. Command-Z undoes EQ edits.
+- Turn off **Processing** to suspend routing and the visualizer. Automatic
+  update checks can be disabled in **General**.
 
-Some protected or exclusive audio streams cannot be tapped by macOS. Hush can
-only process streams that Core Audio exposes. A stream can remain listed
-briefly after playback pauses. Enabled dynamics add processing latency and are
-off by default. Auto preamp can attenuate the equalizer by the highest boost to
-preserve headroom.
+Some protected or exclusive streams are unavailable to Core Audio taps and
+cannot be processed by Hush. A source may remain visible briefly after audio
+stops. Output volume control depends on the selected device.
 
-## Performance and latency
+## Latency and diagnostics
 
-The stable audio path is:
+Hush's audio path is:
 
 ```text
-process tap → per-app aggregate device → capture IOProc → ring buffer
-→ AVAudioEngine → app mixer → EQ/effects → output device
+process tap → per-app aggregate device → capture callback → ring buffer
+→ AVAudioEngine → per-app effects and mixer → output device
 ```
 
-The ring buffer uses a small safety margin to avoid crackling and discontinuity
-when Core Audio callbacks jitter. It permits a short backlog and trims only
-stale excess rather than discarding a whole render buffer. This preserves the
-latency improvement without sacrificing audio quality.
+The ring allows a small safety margin for callback jitter. It trims stale
+backlog only when needed, to protect clean playback and short sounds. Hush does
+not currently preserve an app's original audio/video presentation schedule
+through the separate capture and playback path. In particular, AirPods may
+show additional A/V offset with Hush enabled even when the ring is healthy.
+This release does **not** claim to fix that offset.
 
-Hush's reported processing latency is not complete end-to-end latency. In one
-AirPods configuration, Hush reported approximately 10.7 ms of effect latency
-while the output device reported approximately 160 ms. The latter can include
-Bluetooth buffering. AirPods can therefore feel later than built-in output,
-particularly around pause and resume, even when Hush's processing contribution
-is small.
+For troubleshooting, open **Full settings → Advanced → Routing diagnostics** at
+the bottom of the page. The section is collapsed by default. It shows current
+and recent peak ring occupancy, missing frames, skipped backlog, tap-input to
+source-render timestamp difference, and the default output's reported hardware
+latency. Detailed per-frame timing runs only while the section is open.
 
-Hush intentionally retains its per-app mixer and existing AVAudioEngine
-pipeline. A single-clock aggregate-device experiment based on CoreAudioTapKit
-was tested and reverted because it corrupted real audio. The current design
-prioritizes clean playback, per-app controls, EQ, reliable short sounds, and
-safe device recovery over an unverified architectural rewrite.
+These are different parts of the path. The tap-to-source value excludes
+downstream output and Bluetooth presentation. The device figure is reported by
+macOS; it is not a measured end-to-end or audible latency. Do not add it to
+another downstream estimate. To compare A/V sync, record the same visible
+flash and audible click with and without Hush, using an external microphone
+and the same output device.
 
-Automated validation for this release includes:
-
-- `swift test`: 14 tests covering ring-buffer behavior, EQ response, dynamics,
-  settings migration, output profiles, source scopes, mixer persistence, and
-  master-switch state restoration.
-- Release build with `./build.sh`.
-- Strict code-signature verification of the packaged application.
-
-The packaged application keeps only the required application icon resource;
-SwiftPM's unused resource bundle is omitted to reduce the distribution size.
-
-Bluetooth end-to-end synchronization and subjective audio quality still depend
-on the output device and require real-world listening; the automated tests do
-not measure those properties.
+Hush keeps AVAudioEngine and the per-app mixer. A previous single-clock
+aggregate-device experiment corrupted audio and was reverted. Bluetooth A/V
+sync and subjective audio quality still need real-device listening checks.
 
 ## Build from source
 
@@ -130,33 +94,36 @@ swift test
 open dist/Hush.app
 ```
 
-The build script creates an arm64 `build/Hush.app`, ad hoc signs it, and copies
-it to `dist/Hush.app`. It does not produce a notarized distribution.
-
-Hush uses Apple's Core Audio, AVAudioEngine, AudioToolbox, and AppKit/SwiftUI.
-Audio capture permissions and the streams available for processing are
-controlled by macOS.
+`build.sh` builds an arm64 release app, signs it ad hoc, and copies it to
+`dist/Hush.app`. It does not notarize the app. The test suite covers ring
+buffering and timestamps, EQ response, dynamics, settings migration, mixer
+persistence, and output profiles.
 
 ## Changelog
 
-### 0.2.2
+### 0.3.1
 
-- Changed the application and menu-bar icon to the supplied monochrome waveform.
-- Restored the popup to a translucent native macOS material surface.
-
-### 0.2.3
-
-- Matched source routing typography and spacing to the surrounding dashboard
-  cards and quick-menu controls.
-- Added a source-routing icon inside the Dashboard card header to match the
-  other Dashboard sections.
-- Kept Advanced source routing as a standalone editor section with the same
-  heading hierarchy as the mixer and equalizer.
-- Restored the colorful Hush application icon while keeping the menu-bar
-  waveform monochrome and appearance-aware.
+- Added tap and source-render timing diagnostics for investigating routing
+  delay, while keeping the existing audio buffering and engine.
+- Moved routing diagnostics into a collapsed Advanced section and removed
+  redundant latency estimates, temporary counters, and unused UI.
+- Disabled per-frame timing work when diagnostics are closed; cached the
+  reported output latency instead of querying Core Audio on every visualizer
+  refresh.
+- Corrected planar stereo visualizer sampling and reduced unnecessary
+  diagnostics-driven UI updates.
 
 ### 0.3.0
 
-- Added optional automatic updates from the Hush GitHub releases.
-- Added checksum verification before an update is installed.
-- Added a General setting to enable or disable automatic updates.
+- Added optional automatic updates from GitHub releases, with SHA-256
+  verification before installation.
+- Added a General setting for update checks.
+
+### 0.2.3
+
+- Refined the source-routing controls in Dashboard and Advanced settings.
+- Restored the colorful app icon and kept the menu-bar waveform monochrome.
+
+### 0.2.2
+
+- Updated the app and menu-bar icons and restored the translucent quick menu.

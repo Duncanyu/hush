@@ -21,15 +21,14 @@ struct OutputDevice: Identifiable, Equatable {
     let isDefault: Bool
 }
 
-struct AudioDiagnostics {
+struct AudioDiagnostics: Equatable {
     var queuedFrames = 0
+    var peakQueuedFrames = 0
     var underrunFrames: UInt64 = 0
     var skippedFrames: UInt64 = 0
     var sampleRate = 0.0
     var outputLatencyMs = 0.0
-    var effectLatencyMs = 0.0
-    var routeStarts = 0
-    var lastRouteSetupMs = 0.0
+    var tapToSourceRenderMs = 0.0
     var gainReductionDb = 0.0
     var peakLevel = 0.0
     var bandLevels = Array(repeating: 0.0, count: 8)
@@ -105,17 +104,20 @@ private final class AppRoute {
         self.graph = graph
         guard let ring = AudioRingCreate(8192) else { throw HushAudioError("Could not allocate audio buffer") }
         self.ring = ring
+        AudioRingSetSampleRate(ring, sampleRate)
         equalizer.bypass = true
         compressor.bypass = true
         limiter.bypass = true
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate,
                                    channels: 2, interleaved: false)!
-        source = AVAudioSourceNode(format: format) { _, _, frameCount, output in
+        source = AVAudioSourceNode(format: format) { _, timestamp, frameCount, output in
             let buffers = UnsafeMutableAudioBufferListPointer(output)
             guard buffers.count >= 2,
                   let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
                   let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return kAudio_ParamError }
-            AudioRingRead(ring, left, right, frameCount)
+            let renderHostTime = timestamp.pointee.mFlags.contains(.hostTimeValid)
+                ? timestamp.pointee.mHostTime : 0
+            AudioRingReadTimed(ring, left, right, frameCount, renderHostTime)
             return noErr
         }
     }
@@ -145,8 +147,8 @@ final class AudioRouter {
     private var outputUID = ""
     private var outputRate = 0.0
     private var engineReady = false
-    private var routeStarts = 0
-    private var lastRouteSetupMs = 0.0
+    private var outputLatencyMs: Double?
+    private var timingDiagnosticsEnabled = false
 
     init() {
         engine.disconnectNodeOutput(engine.mainMixerNode)
@@ -289,13 +291,12 @@ final class AudioRouter {
     func diagnostics() -> AudioDiagnostics {
         var result = AudioDiagnostics()
         result.sampleRate = outputRate
-        result.routeStarts = routeStarts
-        result.lastRouteSetupMs = lastRouteSetupMs
-        if let route = routes.values.first {
-            result.effectLatencyMs = (route.equalizer.latency + (route.compressor.bypass ? 0 : route.compressor.latency) +
-                                      (route.limiter.bypass ? 0 : route.limiter.latency)) * 1_000
+        // Device latency is stable for this engine/output; querying it each
+        // visualizer tick enters Core Audio's device property path.
+        if outputLatencyMs == nil, engineReady {
+            outputLatencyMs = engine.outputNode.presentationLatency * 1_000
         }
-        result.outputLatencyMs = engine.outputNode.presentationLatency * 1_000
+        result.outputLatencyMs = outputLatencyMs ?? 0
         if let compressor = routes.values.first?.compressor, !compressor.bypass {
             let reduction = Double(compressor.auAudioUnit.parameterTree?
                 .parameter(withAddress: AUParameterAddress(kDynamicsProcessorParam_CompressionAmount))?.value ?? 0)
@@ -304,8 +305,11 @@ final class AudioRouter {
         for route in routes.values {
             let stats = AudioRingGetStats(route.ring)
             result.queuedFrames = max(result.queuedFrames, Int(stats.queuedFrames))
+            result.peakQueuedFrames = max(result.peakQueuedFrames, Int(stats.peakQueuedFrames))
             result.underrunFrames += stats.underrunFrames
             result.skippedFrames += stats.skippedFrames
+            result.tapToSourceRenderMs = max(result.tapToSourceRenderMs,
+                                             Double(stats.tapToSourceRenderUs) / 1_000)
             result.peakLevel = max(result.peakLevel, Double(stats.peakLevel))
             let bands = [stats.bandLevels.0, stats.bandLevels.1, stats.bandLevels.2, stats.bandLevels.3,
                          stats.bandLevels.4, stats.bandLevels.5, stats.bandLevels.6, stats.bandLevels.7]
@@ -314,6 +318,11 @@ final class AudioRouter {
             }
         }
         return result
+    }
+
+    func setTimingDiagnosticsEnabled(_ enabled: Bool) {
+        timingDiagnosticsEnabled = enabled
+        for route in routes.values { AudioRingSetTimingEnabled(route.ring, enabled ? 1 : 0) }
     }
 
     func discover() -> [AudioApp] {
@@ -464,6 +473,7 @@ final class AudioRouter {
     func stop() {
         engine.stop()
         engineReady = false
+        outputLatencyMs = nil
         for id in Array(routes.keys) { remove(id) }
         for route in retired {
             route.graph.detach(route.source)
@@ -504,7 +514,6 @@ final class AudioRouter {
     }
 
     private func add(_ app: AudioApp, outputUID targetUID: String, settings: HushSettings) throws {
-        let setupStarted = ProcessInfo.processInfo.systemUptime
         let tapUUID = UUID()
         let targetDevice = objectList(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices)
             .first { stringProperty($0, kAudioDevicePropertyDeviceUID) == targetUID }
@@ -537,6 +546,7 @@ final class AudioRouter {
             }
             let route = try AppRoute(ids: app.processIDs, sampleRate: format.mSampleRate,
                                      outputUID: targetUID, graph: graph)
+            AudioRingSetTimingEnabled(route.ring, timingDiagnosticsEnabled ? 1 : 0)
             route.tap = tap
             do {
                 let details: [String: Any] = [
@@ -577,18 +587,22 @@ final class AudioRouter {
                     try graph.start()
                     if graph === engine { engineReady = true }
                 }
-                let status = AudioDeviceCreateIOProcIDWithBlock(&route.ioProc, route.aggregate, nil) { _, input, _, output, _ in
+                let status = AudioDeviceCreateIOProcIDWithBlock(&route.ioProc, route.aggregate, nil) { _, input, inputTime, output, _ in
+                    let captureHostTime = inputTime.pointee.mFlags.contains(.hostTimeValid)
+                        ? inputTime.pointee.mHostTime : 0
                     let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
                     if let buffer = buffers.last, let data = buffer.mData {
                         let count = buffer.mDataByteSize / UInt32(MemoryLayout<Float>.size)
                         if buffer.mNumberChannels == 2 {
-                            AudioRingWrite(route.ring, data.assumingMemoryBound(to: Float.self), nil, count / 2, 1)
+                            AudioRingWriteTimed(route.ring, data.assumingMemoryBound(to: Float.self), nil,
+                                                count / 2, 1, captureHostTime)
                         } else if buffer.mNumberChannels == 1, buffers.count >= 2,
                                   let right = buffers[buffers.count - 1].mData {
-                            AudioRingWrite(route.ring, buffers[buffers.count - 2].mData?.assumingMemoryBound(to: Float.self),
-                                           right.assumingMemoryBound(to: Float.self), count, 0)
+                            AudioRingWriteTimed(route.ring, buffers[buffers.count - 2].mData?.assumingMemoryBound(to: Float.self),
+                                                right.assumingMemoryBound(to: Float.self), count, 0, captureHostTime)
                         } else if buffer.mNumberChannels == 1 {
-                            AudioRingWrite(route.ring, data.assumingMemoryBound(to: Float.self), nil, count, 0)
+                            AudioRingWriteTimed(route.ring, data.assumingMemoryBound(to: Float.self), nil,
+                                                count, 0, captureHostTime)
                         }
                     }
                     for buffer in UnsafeMutableAudioBufferListPointer(output) {
@@ -606,8 +620,6 @@ final class AudioRouter {
                 let start = AudioDeviceStart(route.aggregate, route.ioProc)
                 guard start == noErr else { throw HushAudioError("Starting \(app.name) failed (\(start))") }
                 routes[app.id] = route
-                routeStarts += 1
-                lastRouteSetupMs = (ProcessInfo.processInfo.systemUptime - setupStarted) * 1_000
             } catch {
                 if let ioProc = route.ioProc { AudioDeviceDestroyIOProcID(route.aggregate, ioProc) }
                 if route.aggregate != 0 { AudioHardwareDestroyAggregateDevice(route.aggregate) }

@@ -166,51 +166,23 @@ private struct SourceScopePicker: View {
     }
 }
 
-private struct MetricCard: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3.bold()).monospacedDigit()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16).background(panel, in: RoundedRectangle(cornerRadius: 14))
-    }
-}
-
-private struct DashboardMetrics: View {
-    @ObservedObject var diagnostics: DiagnosticsStore
-    let activeApps: Int
-
-    var body: some View {
-        HStack(spacing: 14) {
-            MetricCard(title: "Active apps", value: "\(activeApps)")
-            MetricCard(title: "Routing buffer", value: activeApps == 0 ? "—" :
-                       String(format: "%.1f ms", diagnostics.value.queuedMs))
-            MetricCard(title: "Reported output latency",
-                       value: String(format: "%.1f ms", diagnostics.value.outputLatencyMs))
-        }
-    }
-}
-
 private struct RoutingDiagnostics: View {
     @ObservedObject var diagnostics: DiagnosticsStore
-    let activeApps: Int
 
     var body: some View {
-        HStack(spacing: 12) {
-            MetricCard(title: "Hush queue", value: activeApps == 0 ? "—" :
-                       String(format: "%.1f ms", diagnostics.value.queuedMs))
-            MetricCard(title: "Missing frames", value: "\(diagnostics.value.underrunFrames)")
-            MetricCard(title: "Skipped backlog", value: "\(diagnostics.value.skippedFrames)")
+        let timing = diagnostics.value
+        VStack(alignment: .leading, spacing: 6) {
+            Text(String(format: "Hush queue now / peak: %.1f / %.1f ms", timing.queuedMs,
+                        timing.sampleRate > 0 ? Double(timing.peakQueuedFrames) / timing.sampleRate * 1_000 : 0))
+            Text("Missing frames: \(timing.underrunFrames) · Skipped backlog: \(timing.skippedFrames)")
+            Text(timing.tapToSourceRenderMs > 0
+                 ? String(format: "Tap input → source render time: %.1f ms", timing.tapToSourceRenderMs)
+                 : "Tap input → source render time: unavailable")
+            Text(String(format: "Default output reported hardware latency: %.1f ms", timing.outputLatencyMs))
+            Text("Source render time excludes downstream output and Bluetooth presentation. The device value may overlap other output latency estimates; neither measures audible A/V sync.")
+                .font(.caption).foregroundStyle(.secondary)
         }
-        Text("Hush queue measures app routing only. macOS reports output latency, which can be much higher over Bluetooth.")
-            .font(.caption).foregroundStyle(.secondary)
-        Text(String(format: "Routes started: %d · Last setup: %.0f ms",
-                    diagnostics.value.routeStarts, diagnostics.value.lastRouteSetupMs))
-            .font(.caption).foregroundStyle(.secondary)
+        .monospacedDigit()
     }
 }
 
@@ -225,16 +197,6 @@ private struct GainReductionMeter: View {
                 .monospacedDigit().foregroundStyle(.secondary)
         }
         ProgressView(value: min(24, diagnostics.value.gainReductionDb), total: 24).tint(.blue)
-    }
-}
-
-private struct EffectLatencyNote: View {
-    @ObservedObject var diagnostics: DiagnosticsStore
-
-    var body: some View {
-        Text(String(format: "Enabled effects add about %.1f ms of processing latency at the current sample rate.",
-                    diagnostics.value.effectLatencyMs))
-            .font(.caption).foregroundStyle(.secondary)
     }
 }
 
@@ -579,6 +541,7 @@ struct SettingsView: View {
     @State private var presetName = ""
     @State private var preampStart = 0.0
     @State private var preampPreset = "Flat"
+    @State private var showRoutingDiagnostics = false
 
     var body: some View {
         TabView {
@@ -650,6 +613,17 @@ struct SettingsView: View {
                 SourceOutputPanel(model: model, compact: false, card: false)
                 equalizer
                 dynamics
+                DisclosureGroup("Routing diagnostics", isExpanded: $showRoutingDiagnostics) {
+                    RoutingDiagnostics(diagnostics: model.diagnostics)
+                        .padding(.top, 8)
+                }
+                .onChange(of: showRoutingDiagnostics) { _, enabled in
+                    model.setTimingDiagnosticsEnabled(enabled)
+                }
+                .onDisappear {
+                    showRoutingDiagnostics = false
+                    model.setTimingDiagnosticsEnabled(false)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -861,7 +835,6 @@ struct SettingsView: View {
                 }
             }
             .padding(16).background(panel, in: RoundedRectangle(cornerRadius: 14))
-            EffectLatencyNote(diagnostics: model.diagnostics)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
